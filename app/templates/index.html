@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Hero Section -->
+<section class="mb-12 text-center md:text-left">
+    <h1 class="text-3xl md:text-4xl font-bold text-licilink-blue mb-4">
+        HUB de Sistemas LiciLink
+    </h1>
+    <p class="text-lg text-licilink-dark max-w-3xl">
+        Acesse de forma centralizada as soluções LiciLink para gestão,
+        planejamento, documentação e apoio às atividades administrativas.
+    </p>
+</section>
+
+<!-- Catálogo de Sistemas -->
+<section>
+    <h2 class="text-2xl font-semibold mb-6 border-b border-gray-200 pb-2">Meus Sistemas</h2>
+    
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {% for system in systems %}
+        <article class="bg-white rounded-xl shadow-sm border border-gray-100 p-6 flex flex-col hover:shadow-md transition-shadow duration-200">
+            
+            <div class="flex justify-between items-start mb-4">
+                <h3 class="text-xl font-bold text-gray-800">{{ system.name }}</h3>
+                
+                {% if system.status == 'available' %}
+                    <span class="inline-flex items-center rounded-full bg-green-50 px-2.5 py-0.5 text-xs font-medium text-green-700 ring-1 ring-inset ring-green-600/20">
+                        ● Disponível
+                    </span>
+                {% elif system.status == 'maintenance' %}
+                    <span class="inline-flex items-center rounded-full bg-yellow-50 px-2.5 py-0.5 text-xs font-medium text-yellow-800 ring-1 ring-inset ring-yellow-600/20">
+                        ● Em manutenção
+                    </span>
+                {% else %}
+                    <span class="inline-flex items-center rounded-full bg-gray-50 px-2.5 py-0.5 text-xs font-medium text-gray-600 ring-1 ring-inset ring-gray-500/10">
+                        ● Indisponível
+                    </span>
+                {% endif %}
+            </div>
+            
+            <p class="text-gray-600 text-sm mb-6 flex-grow">
+                {{ system.description }}
+            </p>
+            
+            <div class="mt-auto pt-4 border-t border-gray-50">
+                {% if system.status == 'available' and system.url %}
+                    <a href="{{ system.url }}"
+                       target="_blank"
+                       rel="noopener noreferrer"
+                       class="inline-flex items-center justify-center w-full bg-licilink-blue hover:bg-blue-800 text-white font-medium py-2 px-4 rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-licilink-blue">
+                        Acessar sistema &rarr;
+                    </a>
+                {% else %}
+                    <button disabled
+                            class="inline-flex items-center justify-center w-full bg-gray-100 text-gray-400 cursor-not-allowed font-medium py-2 px-4 rounded-lg">
+                        Acesso indisponível
+                    </button>
+                {% endif %}
+            </div>
+        </article>
+        {% endfor %}
+    </div>
+</section>
+{% endblock %}
