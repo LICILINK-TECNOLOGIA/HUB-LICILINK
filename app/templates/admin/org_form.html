@@ -1,0 +1,69 @@
+{% extends 'base.html' %}
+
+{% block title %}Nova Organização - LiciLink HUB{% endblock %}
+
+{% block extra_head %}
+<style>
+    .admin-container {
+        width: 100%;
+        max-width: 800px;
+        margin: 0 auto;
+    }
+    .admin-header {
+        margin-bottom: 2rem;
+        border-bottom: 2px solid var(--border-color);
+        padding-bottom: 1rem;
+    }
+    .card {
+        background-color: var(--white);
+        border-radius: var(--radius-md);
+        box-shadow: var(--shadow-sm);
+        padding: 2rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="admin-container">
+    <div class="admin-header">
+        <h2>Nova Organização</h2>
+        <a href="{{ url_for('admin.users_orgs') }}" style="color: var(--text-muted); text-decoration: none;">&larr; Voltar para Usuários & Empresas</a>
+    </div>
+
+    <div class="card">
+        <form action="{{ url_for('admin.create_organization') }}" method="POST">
+            <h3 style="margin-bottom: 1.5rem; color: var(--primary-blue);">Dados da Empresa</h3>
+
+            <div class="form-group">
+                <label for="legal_name" class="form-label">Razão Social *</label>
+                <input type="text" id="legal_name" name="legal_name" class="form-control" required placeholder="Ex: Empresa de Tecnologia Ltda.">
+            </div>
+
+            <div class="form-group">
+                <label for="trade_name" class="form-label">Nome Fantasia</label>
+                <input type="text" id="trade_name" name="trade_name" class="form-control" placeholder="Ex: Empresa Tech">
+            </div>
+
+            <div class="form-group">
+                <label for="cnpj" class="form-label">CNPJ</label>
+                <input type="text" id="cnpj" name="cnpj" class="form-control" placeholder="00.000.000/0001-00">
+            </div>
+
+            <div class="form-group">
+                <label for="email" class="form-label">E-mail</label>
+                <input type="email" id="email" name="email" class="form-control" placeholder="contato@empresa.com">
+            </div>
+
+            <div class="form-group">
+                <label for="phone" class="form-label">Telefone</label>
+                <input type="text" id="phone" name="phone" class="form-control" placeholder="(00) 00000-0000">
+            </div>
+
+            <div style="display: flex; gap: 1rem; margin-top: 2rem;">
+                <button type="submit" class="btn btn-primary">Criar Organização</button>
+                <a href="{{ url_for('admin.users_orgs') }}" class="btn" style="background-color: #E0E0E0; color: var(--text-dark);">Cancelar</a>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

@@ -1,5 +1,5 @@
 from .base import BaseModel
-from .identity import User, Organization, OrganizationMember
+from .identity import User, Organization, OrganizationMember, PendingEmailVerification
 from .authorization import Role, Permission, RolePermission
 from .access import Product, ProductPermission, OrganizationProduct
 from .crm import Lead
@@ -10,6 +10,7 @@ __all__ = [
     'User',
     'Organization',
     'OrganizationMember',
+    'PendingEmailVerification',
     'Role',
     'Permission',
     'RolePermission',

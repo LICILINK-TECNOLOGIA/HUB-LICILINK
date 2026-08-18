@@ -74,27 +74,38 @@
         </div>
     </div>
 
-    <h3>Organizações Clientes</h3>
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <h3 style="margin: 0; color: var(--primary-blue);">Organizações Clientes</h3>
+        <a href="{{ url_for('admin.new_organization') }}" class="btn btn-primary" style="text-decoration: none; padding: 0.5rem 1rem;">+ Nova Organização</a>
+    </div>
     <table class="data-table">
         <thead>
             <tr>
-                <th>ID</th>
-                <th>Nome</th>
+                <th>Nome (Razão Social)</th>
+                <th>Nome Fantasia</th>
                 <th>CNPJ</th>
+                <th>Status</th>
                 <th>Criado em</th>
             </tr>
         </thead>
         <tbody>
             {% for org in orgs %}
             <tr>
-                <td><small>{{ org.id }}</small></td>
-                <td><strong>{{ org.name }}</strong></td>
+                <td><a href="{{ url_for('admin.org_details', org_id=org.id) }}" style="color: var(--primary-blue); font-weight: bold; text-decoration: none;">{{ org.legal_name }}</a></td>
+                <td>{{ org.trade_name or '-' }}</td>
                 <td>{{ org.cnpj or '-' }}</td>
+                <td>
+                    {% if org.is_active %}
+                    <span style="background-color: #E8F5E9; color: #2E7D32; padding: 2px 8px; border-radius: 12px; font-size: 0.8rem; font-weight: 600;">ATIVA</span>
+                    {% else %}
+                    <span style="background-color: #FFEBEE; color: #C62828; padding: 2px 8px; border-radius: 12px; font-size: 0.8rem; font-weight: 600;">INATIVA</span>
+                    {% endif %}
+                </td>
                 <td>{{ org.created_at.strftime('%d/%m/%Y') }}</td>
             </tr>
             {% else %}
             <tr>
-                <td colspan="4" class="text-center">Nenhuma organização encontrada.</td>
+                <td colspan="5" class="text-center">Nenhuma organização encontrada.</td>
             </tr>
             {% endfor %}
         </tbody>
@@ -107,8 +118,8 @@
                 <th>Nome</th>
                 <th>E-mail</th>
                 <th>Status</th>
-                <th>Tipo</th>
-                <th>Criado em</th>
+                <th>Tipo / Vínculo</th>
+                <th>Ações</th>
             </tr>
         </thead>
         <tbody>
@@ -127,10 +138,35 @@
                     {% if u.is_internal_admin %}
                     <span style="background: var(--accent-orange); color: white; padding: 2px 8px; border-radius: 12px; font-size: 0.8rem;">ADMIN LiciLink</span>
                     {% else %}
-                    Cliente / Externo
+                        {% if u.memberships %}
+                            {% for membership in u.memberships %}
+                            <a href="{{ url_for('admin.org_details', org_id=membership.organization.id) }}" style="display: block; font-size: 0.85rem; color: var(--primary-blue); text-decoration: none;">
+                                {{ membership.organization.legal_name }} ({{ membership.role.name }})
+                            </a>
+                            {% endfor %}
+                        {% else %}
+                            <span style="color: var(--text-muted); font-size: 0.85rem;">Sem vínculo</span>
+                        {% endif %}
                     {% endif %}
                 </td>
-                <td>{{ u.created_at.strftime('%d/%m/%Y') }}</td>
+                <td>
+                    {% if not u.is_internal_admin %}
+                        <form action="{{ url_for('admin.link_user_to_org', user_id=u.id) }}" method="POST" style="display: flex; gap: 0.5rem; align-items: center;">
+                            <select name="organization_id" required style="padding: 4px; font-size: 0.8rem; border-radius: 4px;">
+                                <option value="">Vincular a...</option>
+                                {% for org in orgs %}
+                                <option value="{{ org.id }}">{{ org.legal_name }}</option>
+                                {% endfor %}
+                            </select>
+                            <select name="role" required style="padding: 4px; font-size: 0.8rem; border-radius: 4px;">
+                                {% for r in roles %}
+                                <option value="{{ r.name }}">{{ r.name|upper }}</option>
+                                {% endfor %}
+                            </select>
+                            <button type="submit" style="padding: 4px 8px; font-size: 0.8rem; background-color: var(--primary-blue); color: white; border: none; border-radius: 4px; cursor: pointer;">Vincular</button>
+                        </form>
+                    {% endif %}
+                </td>
             </tr>
             {% else %}
             <tr>

@@ -6,8 +6,12 @@ from ..extensions import db
 class Organization(BaseModel):
     __tablename__ = 'organizations'
 
-    name = db.Column(db.String(255), nullable=False)
-    cnpj = db.Column(db.String(20), unique=True, nullable=True) # Alguns podem nao ter cnpj
+    legal_name = db.Column(db.String(255), nullable=False)
+    trade_name = db.Column(db.String(255), nullable=True)
+    cnpj = db.Column(db.String(14), unique=True, nullable=True) # Somente numeros
+    email = db.Column(db.String(255), nullable=True)
+    phone = db.Column(db.String(20), nullable=True)
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
 
     # Relacionamentos
     members = db.relationship('OrganizationMember', back_populates='organization', cascade="all, delete-orphan")
@@ -20,6 +24,7 @@ class User(UserMixin, BaseModel):
     password_hash = db.Column(db.String(255), nullable=False)
     is_active = db.Column(db.Boolean, default=True, nullable=False)
     is_internal_admin = db.Column(db.Boolean, default=False, nullable=False)
+    email_verified_at = db.Column(db.DateTime, nullable=True)
 
     # Relacionamentos
     memberships = db.relationship('OrganizationMember', back_populates='user', cascade="all, delete-orphan")
@@ -38,3 +43,18 @@ class OrganizationMember(BaseModel):
     user = db.relationship('User', back_populates='memberships')
     organization = db.relationship('Organization', back_populates='members')
     role = db.relationship('Role')
+
+class PendingEmailVerification(BaseModel):
+    __tablename__ = 'pending_email_verifications'
+
+    name = db.Column(db.String(255), nullable=False)
+    email = db.Column(db.String(255), unique=True, nullable=False, index=True)
+    password_hash = db.Column(db.String(255), nullable=False)
+    verification_code_hash = db.Column(db.String(255), nullable=False)
+    expires_at = db.Column(db.DateTime, nullable=False)
+    attempts = db.Column(db.Integer, default=0, nullable=False)
+    max_attempts = db.Column(db.Integer, default=5, nullable=False)
+    last_sent_at = db.Column(db.DateTime, nullable=False)
+    resend_count = db.Column(db.Integer, default=0, nullable=False)
+    verified_at = db.Column(db.DateTime, nullable=True)
+

@@ -17,10 +17,13 @@ def create_app(config_name=None):
     # Import Models so Alembic can detect them
     from . import models
     
+    from .extensions import db, migrate, login_manager, limiter
+    
     # Initialize Extensions
     db.init_app(app)
     migrate.init_app(app, db)
     login_manager.init_app(app)
+    limiter.init_app(app)
     
     # Initialize CLI commands
     from .cli import init_cli

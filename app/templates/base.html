@@ -248,7 +248,7 @@
         </a>
         <div class="nav-links">
             {% if current_user.is_authenticated %}
-                {% if getattr(current_user, 'is_internal_admin', False) %}
+                {% if current_user.is_internal_admin %}
                     <a href="{{ url_for('admin.dashboard') }}" class="nav-link" style="color: var(--accent-orange);">Admin LiciLink</a>
                 {% endif %}
                 <span class="nav-link">Olá, {{ current_user.name }}</span>

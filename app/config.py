@@ -13,6 +13,14 @@ class Config:
     L_GEDO_URL = os.getenv('L_GEDO_URL', 'https://gedo-hml.licilink.com.br')
     L_HUNT_URL = os.getenv('L_HUNT_URL', 'https://hunt-hml.licilink.com.br')
 
+    # Configurações de E-mail Verification
+    VERIFICATION_CODE_TTL = int(os.getenv('VERIFICATION_CODE_TTL', 600))
+    VERIFICATION_MAX_ATTEMPTS = int(os.getenv('VERIFICATION_MAX_ATTEMPTS', 5))
+    VERIFICATION_RESEND_COOLDOWN = int(os.getenv('VERIFICATION_RESEND_COOLDOWN', 60))
+    VERIFICATION_MAX_RESENDS = int(os.getenv('VERIFICATION_MAX_RESENDS', 5))
+    EMAIL_PROVIDER = os.getenv('EMAIL_PROVIDER', 'console')
+    EMAIL_FROM = os.getenv('EMAIL_FROM', 'no-reply@licilink.com.br')
+
 class DevelopmentConfig(Config):
     DEBUG = True
     SQLALCHEMY_DATABASE_URI = os.getenv('DATABASE_URL', 'postgresql://hub_user:hub_password@localhost:5432/hub_db')
