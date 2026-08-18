@@ -1,0 +1,146 @@
+{% extends 'base.html' %}
+
+{% block title %}Verificar E-mail - LiciLink HUB{% endblock %}
+
+{% block extra_head %}
+<style>
+    .auth-container {
+        width: 100%;
+        max-width: 450px;
+        background-color: var(--white);
+        padding: 2.5rem;
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-lg);
+        margin-top: 2rem;
+    }
+    .auth-title {
+        color: var(--primary-blue);
+        margin-bottom: 1rem;
+        text-align: center;
+    }
+    .auth-subtitle {
+        color: var(--text-muted);
+        text-align: center;
+        margin-bottom: 2rem;
+        line-height: 1.5;
+    }
+    .auth-footer {
+        text-align: center;
+        margin-top: 1.5rem;
+        font-size: 0.9rem;
+        color: var(--text-muted);
+    }
+    .auth-footer button {
+        background: none;
+        border: none;
+        color: var(--accent-orange);
+        text-decoration: none;
+        font-weight: 600;
+        cursor: pointer;
+        padding: 0;
+    }
+    .auth-footer button:hover {
+        text-decoration: underline;
+    }
+    .code-inputs {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 1rem;
+    }
+    .code-input {
+        width: 3rem;
+        height: 3.5rem;
+        font-size: 1.5rem;
+        text-align: center;
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-md);
+        font-weight: 600;
+        color: var(--primary-blue);
+    }
+    .code-input:focus {
+        border-color: var(--primary-blue);
+        outline: none;
+        box-shadow: 0 0 0 2px rgba(21, 101, 192, 0.2);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="auth-container">
+    <h2 class="auth-title">Verifique seu E-mail</h2>
+    <p class="auth-subtitle">
+        Enviamos um código de 6 dígitos para o seu e-mail.<br>
+        Insira-o abaixo para concluir o cadastro.
+    </p>
+
+    <form method="POST" action="{{ url_for('auth.verify') }}" id="verify-form">
+        <!-- Input real que enviará o código -->
+        <input type="hidden" name="code" id="code-hidden">
+        
+        <div class="code-inputs">
+            <input type="text" class="code-input" maxlength="1" pattern="[0-9]" inputmode="numeric" required>
+            <input type="text" class="code-input" maxlength="1" pattern="[0-9]" inputmode="numeric" required>
+            <input type="text" class="code-input" maxlength="1" pattern="[0-9]" inputmode="numeric" required>
+            <input type="text" class="code-input" maxlength="1" pattern="[0-9]" inputmode="numeric" required>
+            <input type="text" class="code-input" maxlength="1" pattern="[0-9]" inputmode="numeric" required>
+            <input type="text" class="code-input" maxlength="1" pattern="[0-9]" inputmode="numeric" required>
+        </div>
+        
+        <button type="submit" class="btn btn-primary w-100 mt-2" id="submit-btn" disabled>Verificar E-mail</button>
+    </form>
+
+    <div class="auth-footer">
+        Não recebeu o código? 
+        <form method="POST" action="{{ url_for('auth.resend_code') }}" style="display: inline;">
+            <button type="submit">Reenviar código</button>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const inputs = document.querySelectorAll('.code-input');
+        const hiddenInput = document.getElementById('code-hidden');
+        const submitBtn = document.getElementById('submit-btn');
+
+        function updateHiddenInput() {
+            let code = '';
+            inputs.forEach(input => code += input.value);
+            hiddenInput.value = code;
+            submitBtn.disabled = code.length !== 6;
+        }
+
+        inputs.forEach((input, index) => {
+            input.addEventListener('input', function(e) {
+                if (this.value.length === 1 && index < inputs.length - 1) {
+                    inputs[index + 1].focus();
+                }
+                updateHiddenInput();
+            });
+
+            input.addEventListener('keydown', function(e) {
+                if (e.key === 'Backspace' && !this.value && index > 0) {
+                    inputs[index - 1].focus();
+                }
+            });
+            
+            // Allow pasting 6 digits
+            input.addEventListener('paste', function(e) {
+                e.preventDefault();
+                const pastedData = e.clipboardData.getData('text').slice(0, 6).replace(/[^0-9]/g, '');
+                for(let i=0; i < pastedData.length; i++) {
+                    if(inputs[i]) {
+                        inputs[i].value = pastedData[i];
+                    }
+                }
+                if(pastedData.length > 0) {
+                    inputs[Math.min(pastedData.length, 5)].focus();
+                }
+                updateHiddenInput();
+            });
+        });
+    });
+</script>
+{% endblock %}

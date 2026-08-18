@@ -1,0 +1,217 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ org.legal_name }} - LiciLink HUB{% endblock %}
+
+{% block extra_head %}
+<style>
+    .admin-container {
+        width: 100%;
+        max-width: 1200px;
+    }
+    .admin-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-end;
+        margin-bottom: 2rem;
+        border-bottom: 2px solid var(--border-color);
+        padding-bottom: 1rem;
+    }
+    .section-card {
+        background-color: var(--white);
+        border-radius: var(--radius-md);
+        box-shadow: var(--shadow-sm);
+        padding: 1.5rem;
+        margin-bottom: 2rem;
+    }
+    .data-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1rem;
+        margin-top: 1rem;
+    }
+    .data-item strong {
+        display: block;
+        color: var(--text-muted);
+        font-size: 0.85rem;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    .data-item span {
+        font-size: 1.1rem;
+        color: var(--text-dark);
+    }
+    
+    .data-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 1rem;
+    }
+    .data-table th, .data-table td {
+        padding: 0.75rem;
+        text-align: left;
+        border-bottom: 1px solid var(--border-color);
+    }
+    .data-table th {
+        background-color: var(--bg-light);
+        font-weight: 600;
+        color: var(--text-muted);
+    }
+    
+    .role-badge {
+        display: inline-block;
+        padding: 4px 10px;
+        border-radius: 12px;
+        font-size: 0.8rem;
+        font-weight: 600;
+        background-color: #E0E0E0;
+    }
+    .role-owner { background-color: #E3F2FD; color: #1565C0; }
+    .role-admin { background-color: #FFF3E0; color: #E65100; }
+    
+    .btn-sm {
+        padding: 0.25rem 0.75rem;
+        font-size: 0.85rem;
+    }
+    
+    .modal {
+        display: none;
+        position: fixed;
+        top: 0; left: 0; width: 100%; height: 100%;
+        background-color: rgba(0,0,0,0.5);
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+    }
+    .modal.active {
+        display: flex;
+    }
+    .modal-content {
+        background-color: var(--white);
+        padding: 2rem;
+        border-radius: var(--radius-md);
+        width: 100%;
+        max-width: 500px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="admin-container">
+    <div class="admin-header">
+        <div>
+            <a href="{{ url_for('admin.users_orgs') }}" style="color: var(--text-muted); text-decoration: none; font-size: 0.9rem;">&larr; Voltar para Usuários & Empresas</a>
+            <h2 style="margin-top: 0.5rem;">{{ org.legal_name }}</h2>
+        </div>
+        <div>
+            <span class="role-badge" style="background-color: #E8F5E9; color: #2E7D32;">ATIVA</span>
+        </div>
+    </div>
+
+    <div class="section-card">
+        <h3 style="color: var(--primary-blue); border-bottom: 1px solid #eee; padding-bottom: 0.5rem;">Dados da Organização</h3>
+        <div class="data-grid">
+            <div class="data-item">
+                <strong>Razão Social</strong>
+                <span>{{ org.legal_name }}</span>
+            </div>
+            <div class="data-item">
+                <strong>Nome Fantasia</strong>
+                <span>{{ org.trade_name or '-' }}</span>
+            </div>
+            <div class="data-item">
+                <strong>CNPJ</strong>
+                <span>{{ org.cnpj or '-' }}</span>
+            </div>
+            <div class="data-item">
+                <strong>E-mail</strong>
+                <span>{{ org.email or '-' }}</span>
+            </div>
+            <div class="data-item">
+                <strong>Telefone</strong>
+                <span>{{ org.phone or '-' }}</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="section-card">
+        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #eee; padding-bottom: 0.5rem;">
+            <h3 style="color: var(--primary-blue);">Membros</h3>
+            <button class="btn btn-primary btn-sm" onclick="document.getElementById('addMemberModal').classList.add('active')">+ Adicionar Usuário</button>
+        </div>
+        
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Nome</th>
+                    <th>E-mail</th>
+                    <th>Papel</th>
+                    <th>Ações</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for member in org.members %}
+                <tr>
+                    <td>{{ member.user.name }}</td>
+                    <td>{{ member.user.email }}</td>
+                    <td>
+                        <span class="role-badge {% if member.role.name == 'owner' %}role-owner{% elif member.role.name == 'admin' %}role-admin{% endif %}">
+                            {{ member.role.name|upper }}
+                        </span>
+                    </td>
+                    <td>
+                        <form action="{{ url_for('admin.change_member_role', org_id=org.id, user_id=member.user_id) }}" method="POST" style="display: inline-block;">
+                            <select name="role" onchange="this.form.submit()" style="padding: 2px; border-radius: 4px;">
+                                {% for r in roles %}
+                                <option value="{{ r.name }}" {% if r.id == member.role_id %}selected{% endif %}>{{ r.name|upper }}</option>
+                                {% endfor %}
+                            </select>
+                        </form>
+                        
+                        <form action="{{ url_for('admin.remove_member', org_id=org.id, user_id=member.user_id) }}" method="POST" style="display: inline-block; margin-left: 10px;">
+                            <button type="submit" class="btn btn-sm" style="background-color: #FFEBEE; color: #C62828; border: none; cursor: pointer;" onclick="return confirm('Remover membro?')">Remover</button>
+                        </form>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="4" class="text-center">Nenhum membro vinculado a esta organização.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Modal Adicionar Membro -->
+<div id="addMemberModal" class="modal">
+    <div class="modal-content">
+        <h3 style="margin-bottom: 1rem; color: var(--primary-blue);">Adicionar Membro</h3>
+        <form action="{{ url_for('admin.add_member', org_id=org.id) }}" method="POST">
+            <div class="form-group">
+                <label class="form-label">Usuário</label>
+                <select name="user_id" class="form-control" required>
+                    <option value="">Selecione um usuário...</option>
+                    {% for u in users %}
+                        {% if not u.is_internal_admin %}
+                        <option value="{{ u.id }}">{{ u.name }} ({{ u.email }})</option>
+                        {% endif %}
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Papel</label>
+                <select name="role" class="form-control" required>
+                    {% for r in roles %}
+                    <option value="{{ r.name }}">{{ r.name|upper }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div style="display: flex; gap: 1rem; margin-top: 1rem;">
+                <button type="submit" class="btn btn-primary">Adicionar</button>
+                <button type="button" class="btn" style="background-color: #E0E0E0;" onclick="document.getElementById('addMemberModal').classList.remove('active')">Cancelar</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+{% endblock %}

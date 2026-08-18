@@ -1,0 +1,119 @@
+{% extends 'base.html' %}
+
+{% block title %}CRM Leads - LiciLink HUB{% endblock %}
+
+{% block extra_head %}
+<style>
+    .admin-container {
+        width: 100%;
+        max-width: 1200px;
+    }
+    .admin-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 2rem;
+        border-bottom: 2px solid var(--border-color);
+        padding-bottom: 1rem;
+    }
+    .admin-nav {
+        display: flex;
+        gap: 1rem;
+    }
+    .admin-nav a {
+        padding: 0.5rem 1rem;
+        text-decoration: none;
+        color: var(--text-dark);
+        border-radius: var(--radius-md);
+        background-color: var(--white);
+        box-shadow: var(--shadow-sm);
+        font-weight: 500;
+    }
+    .admin-nav a:hover, .admin-nav a.active {
+        background-color: var(--primary-blue);
+        color: var(--white);
+    }
+    
+    .data-table {
+        width: 100%;
+        border-collapse: collapse;
+        background-color: var(--white);
+        box-shadow: var(--shadow-md);
+        border-radius: var(--radius-md);
+        overflow: hidden;
+    }
+    .data-table th, .data-table td {
+        padding: 1rem;
+        text-align: left;
+        border-bottom: 1px solid var(--border-color);
+    }
+    .data-table th {
+        background-color: var(--bg-light);
+        font-weight: 600;
+        color: var(--text-muted);
+    }
+    .data-table tr:hover {
+        background-color: #F5F5F5;
+    }
+    .status-badge {
+        display: inline-block;
+        padding: 4px 10px;
+        border-radius: 12px;
+        font-size: 0.85rem;
+        font-weight: 600;
+        background-color: #E0E0E0;
+    }
+    .status-badge.new { background-color: #E3F2FD; color: #1565C0; }
+    .status-badge.contacted { background-color: #FFF3E0; color: #F57C00; }
+    .status-badge.qualified { background-color: #E8F5E9; color: #2E7D32; }
+    .status-badge.lost { background-color: #FFEBEE; color: #C62828; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="admin-container">
+    <div class="admin-header">
+        <h2>Painel de Administração (HUB)</h2>
+        <div class="admin-nav">
+            <a href="{{ url_for('admin.dashboard') }}">Dashboard</a>
+            <a href="{{ url_for('admin.users_orgs') }}">Usuários & Empresas</a>
+            <a href="{{ url_for('admin.crm_leads') }}" class="active">CRM Leads</a>
+        </div>
+    </div>
+
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Nome / Empresa</th>
+                <th>Contato</th>
+                <th>Origem</th>
+                <th>Status</th>
+                <th>Data</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for lead in leads %}
+            <tr>
+                <td>
+                    <strong>{{ lead.name }}</strong><br>
+                    <small>{{ lead.company_name or 'Não informado' }}</small>
+                </td>
+                <td>
+                    {{ lead.email }}<br>
+                    <small>{{ lead.phone or '-' }}</small>
+                </td>
+                <td>{{ lead.source or 'Site' }}</td>
+                <td>
+                    <span class="status-badge {{ lead.status|lower }}">{{ lead.status }}</span>
+                </td>
+                <td>{{ lead.created_at.strftime('%d/%m/%Y %H:%M') }}</td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="5" class="text-center">Nenhum lead encontrado no CRM.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}
