@@ -1,0 +1,188 @@
+{% extends 'base.html' %}
+
+{% block title %}Launcher - LiciLink HUB{% endblock %}
+
+{% block extra_head %}
+<style>
+    .dashboard-header {
+        width: 100%;
+        max-width: 1000px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 2rem;
+    }
+    
+    .org-info h1 {
+        font-size: 1.8rem;
+        color: var(--primary-blue);
+        margin-bottom: 0.2rem;
+    }
+    
+    .org-info p {
+        color: var(--text-muted);
+        font-size: 0.95rem;
+    }
+    
+    .launcher-grid {
+        width: 100%;
+        max-width: 1000px;
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+        gap: 1.5rem;
+    }
+    
+    .product-card {
+        background: var(--white);
+        border-radius: var(--radius-lg);
+        padding: 1.5rem;
+        box-shadow: var(--shadow-sm);
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+        display: flex;
+        flex-direction: column;
+        border-top: 4px solid var(--border-color);
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .product-card:hover {
+        transform: translateY(-4px);
+        box-shadow: var(--shadow-lg);
+    }
+    
+    .product-card[data-status="active"] {
+        border-top-color: var(--primary-blue);
+    }
+    
+    .product-card[data-status="trial"] {
+        border-top-color: var(--accent-orange);
+    }
+    
+    .product-icon {
+        width: 48px;
+        height: 48px;
+        background-color: var(--bg-light);
+        border-radius: var(--radius-md);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 1rem;
+        color: var(--primary-blue);
+    }
+    
+    .product-card[data-status="active"] .product-icon {
+        background-color: rgba(21, 101, 192, 0.1);
+    }
+    
+    .product-name {
+        font-size: 1.2rem;
+        font-weight: 600;
+        margin-bottom: 0.5rem;
+        color: var(--text-dark);
+    }
+    
+    .product-desc {
+        color: var(--text-muted);
+        font-size: 0.9rem;
+        margin-bottom: 1.5rem;
+        flex: 1;
+    }
+    
+    .product-action {
+        margin-top: auto;
+    }
+    
+    .status-badge {
+        position: absolute;
+        top: 1rem;
+        right: 1rem;
+        font-size: 0.75rem;
+        font-weight: 700;
+        padding: 0.2rem 0.6rem;
+        border-radius: 12px;
+        text-transform: uppercase;
+    }
+    
+    .status-active {
+        background-color: #E3F2FD;
+        color: var(--primary-blue);
+    }
+    
+    .status-trial {
+        background-color: #FBE9E7;
+        color: var(--accent-orange);
+    }
+    
+    .status-unsubscribed {
+        background-color: #EEEEEE;
+        color: var(--text-muted);
+    }
+    
+    .empty-state {
+        grid-column: 1 / -1;
+        text-align: center;
+        padding: 3rem;
+        background: var(--white);
+        border-radius: var(--radius-lg);
+        color: var(--text-muted);
+        box-shadow: var(--shadow-sm);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="dashboard-header">
+    <div class="org-info">
+        {% if org %}
+            <h1>Meu Ecossistema LiciLink</h1>
+            <p>Selecione um sistema para acessar pela <strong>{{ org.name }}</strong></p>
+        {% else %}
+            <h1>Aguardando vinculação</h1>
+            <p>Sua conta foi criada com sucesso. Um administrador deverá vinculá-la a uma organização para liberar o acesso às aplicações LiciLink.</p>
+        {% endif %}
+    </div>
+</div>
+
+<div class="launcher-grid">
+    {% if not org %}
+        <!-- Aguardando vinculação, nenhum produto exibido -->
+    {% elif not items %}
+        <div class="empty-state">
+            <h3>Nenhum produto disponível</h3>
+            <p>Sua organização ainda não possui produtos contratados.</p>
+        </div>
+    {% else %}
+        {% for item in items %}
+        <div class="product-card" data-status="{{ item.status }}">
+            
+            {% if item.status == 'active' %}
+                <span class="status-badge status-active">Ativo</span>
+            {% elif item.status == 'trial' %}
+                <span class="status-badge status-trial">Trial</span>
+            {% else %}
+                <span class="status-badge status-unsubscribed">Não Assinado</span>
+            {% endif %}
+
+            <div class="product-icon">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+                    <line x1="8" y1="21" x2="16" y2="21"></line>
+                    <line x1="12" y1="17" x2="12" y2="21"></line>
+                </svg>
+            </div>
+            
+            <h3 class="product-name">{{ item.product.name }}</h3>
+            <p class="product-desc">{{ item.product.description }}</p>
+            
+            <div class="product-action">
+                {% if item.has_access %}
+                    <a href="{{ item.product.url }}" class="btn btn-primary w-100" target="_blank">Acessar Sistema</a>
+                {% else %}
+                    <a href="#" class="btn btn-outline w-100" style="color: var(--primary-blue); border-color: var(--primary-blue);">Conhecer</a>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    {% endif %}
+</div>
+{% endblock %}

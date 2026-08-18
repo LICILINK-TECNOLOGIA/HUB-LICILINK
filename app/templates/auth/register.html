@@ -1,0 +1,65 @@
+{% extends 'base.html' %}
+
+{% block title %}Registro - LiciLink HUB{% endblock %}
+
+{% block extra_head %}
+<style>
+    .auth-container {
+        width: 100%;
+        max-width: 450px;
+        background-color: var(--white);
+        padding: 2.5rem;
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-lg);
+        margin-top: 2rem;
+    }
+    .auth-title {
+        color: var(--primary-blue);
+        margin-bottom: 1.5rem;
+        text-align: center;
+    }
+    .auth-footer {
+        text-align: center;
+        margin-top: 1.5rem;
+        font-size: 0.9rem;
+        color: var(--text-muted);
+    }
+    .auth-footer a {
+        color: var(--accent-orange);
+        text-decoration: none;
+        font-weight: 600;
+    }
+    .section-title {
+        font-size: 1rem;
+        color: var(--text-muted);
+        margin: 1.5rem 0 1rem;
+        border-bottom: 1px solid var(--border-color);
+        padding-bottom: 0.5rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="auth-container">
+    <h2 class="auth-title">Crie sua Conta LiciLink</h2>
+    <form method="POST" action="{{ url_for('auth.register') }}">
+        <div class="form-group">
+            <label class="form-label" for="name">Nome Completo</label>
+            <input type="text" id="name" name="name" class="form-control" required autofocus>
+        </div>
+        <div class="form-group">
+            <label class="form-label" for="email">E-mail Corporativo</label>
+            <input type="email" id="email" name="email" class="form-control" required>
+        </div>
+        <div class="form-group">
+            <label class="form-label" for="password">Senha</label>
+            <input type="password" id="password" name="password" class="form-control" required>
+        </div>
+        
+        <button type="submit" class="btn btn-primary w-100 mt-1">Registrar e Continuar</button>
+    </form>
+    <div class="auth-footer">
+        Já possui uma conta? <a href="{{ url_for('auth.login') }}">Faça login</a>
+    </div>
+</div>
+{% endblock %}

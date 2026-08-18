@@ -1,0 +1,53 @@
+{% extends 'base.html' %}
+
+{% block title %}Login - LiciLink HUB{% endblock %}
+
+{% block extra_head %}
+<style>
+    .auth-container {
+        width: 100%;
+        max-width: 400px;
+        background-color: var(--white);
+        padding: 2.5rem;
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-lg);
+        margin-top: 2rem;
+    }
+    .auth-title {
+        color: var(--primary-blue);
+        margin-bottom: 1.5rem;
+        text-align: center;
+    }
+    .auth-footer {
+        text-align: center;
+        margin-top: 1.5rem;
+        font-size: 0.9rem;
+        color: var(--text-muted);
+    }
+    .auth-footer a {
+        color: var(--accent-orange);
+        text-decoration: none;
+        font-weight: 600;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="auth-container">
+    <h2 class="auth-title">Acesso ao HUB</h2>
+    <form method="POST" action="{{ url_for('auth.login') }}">
+        <div class="form-group">
+            <label class="form-label" for="email">E-mail</label>
+            <input type="email" id="email" name="email" class="form-control" required autofocus>
+        </div>
+        <div class="form-group">
+            <label class="form-label" for="password">Senha</label>
+            <input type="password" id="password" name="password" class="form-control" required>
+        </div>
+        <button type="submit" class="btn btn-accent w-100">Entrar</button>
+    </form>
+    <div class="auth-footer">
+        Não possui uma conta? <a href="{{ url_for('auth.register') }}">Crie sua conta</a>
+    </div>
+</div>
+{% endblock %}
