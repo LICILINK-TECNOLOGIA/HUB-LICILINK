@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Confirme seu cadastro</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #FAFAFA;
+            color: #303030;
+            line-height: 1.6;
+            margin: 0;
+            padding: 0;
+        }
+        .container {
+            max-width: 600px;
+            margin: 40px auto;
+            background-color: #FFFFFF;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .header h1 {
+            color: #1565C0;
+            margin: 0;
+            font-size: 24px;
+        }
+        .code-box {
+            background-color: #FAFAFA;
+            border: 2px dashed #1565C0;
+            text-align: center;
+            padding: 20px;
+            margin: 30px 0;
+            border-radius: 8px;
+        }
+        .code {
+            font-size: 32px;
+            font-weight: bold;
+            color: #F4511E;
+            letter-spacing: 4px;
+        }
+        .footer {
+            margin-top: 40px;
+            font-size: 12px;
+            color: #888;
+            text-align: center;
+            border-top: 1px solid #eee;
+            padding-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>LiciLink</h1>
+        </div>
+        
+        <p>Olá, {{ name }}.</p>
+        
+        <p>Seu código de confirmação da LiciLink é:</p>
+        
+        <div class="code-box">
+            <span class="code">{{ code }}</span>
+        </div>
+        
+        <p>O código é válido por {{ expiration_minutes }} minutos.</p>
+        
+        <p>Se você não realizou este cadastro, por favor, ignore esta mensagem.</p>
+        
+        <div class="footer">
+            &copy; 2026 LiciLink. Todos os direitos reservados.
+        </div>
+    </div>
+</body>
+</html>

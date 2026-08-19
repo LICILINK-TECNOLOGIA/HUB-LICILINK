@@ -19,8 +19,9 @@ class Config:
     VERIFICATION_RESEND_COOLDOWN = int(os.getenv('VERIFICATION_RESEND_COOLDOWN', 60))
     VERIFICATION_MAX_RESENDS = int(os.getenv('VERIFICATION_MAX_RESENDS', 5))
     EMAIL_PROVIDER = os.getenv('EMAIL_PROVIDER', 'console')
-    EMAIL_FROM = os.getenv('EMAIL_FROM', 'no-reply@licilink.com.br')
-
+    RESEND_API_KEY = os.getenv('RESEND_API_KEY')
+    EMAIL_FROM = os.getenv('EMAIL_FROM')
+    EMAIL_REPLY_TO = os.getenv('EMAIL_REPLY_TO')
 class DevelopmentConfig(Config):
     DEBUG = True
     SQLALCHEMY_DATABASE_URI = os.getenv('DATABASE_URL', 'postgresql://hub_user:hub_password@localhost:5432/hub_db')
