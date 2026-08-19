@@ -6,7 +6,7 @@ from ..extensions import db
 from ..models import User, PendingEmailVerification
 from .organization_service import OrganizationService
 from .audit_service import AuditService
-from .email_service import EmailService
+from .email import EmailService
 
 class AuthService:
     @staticmethod
@@ -53,15 +53,21 @@ class AuthService:
         db.session.commit()
         
         # 7. Enviar e-mail
-        EmailService.send_verification_code(email, code)
+        try:
+            EmailService().send_verification_email(to=email, name=name, code=code)
+        except Exception as e:
+            # Log the original error if we had access to logger, or it will be logged by EmailService
+            raise ValueError("Não foi possível enviar o código de confirmação. Tente novamente.")
         
-        AuditService.log_action('user.registration.started', resource_type='pending_registration', resource_id=str(pending.id))
+        AuditService.log_action('user.registration.started', resource_type='pending_registration', resource_id=pending.id)
         
         return pending
 
     @staticmethod
     def verify_email(pending_id, code):
-        pending = PendingEmailVerification.query.get(pending_id)
+        import uuid
+        pending_uuid = uuid.UUID(str(pending_id))
+        pending = PendingEmailVerification.query.get(pending_uuid)
         if not pending:
             raise ValueError("Registro pendente não encontrado.")
             
@@ -78,7 +84,7 @@ class AuthService:
         if not werkzeug.security.check_password_hash(pending.verification_code_hash, code):
             pending.attempts += 1
             db.session.commit()
-            AuditService.log_action('user.email_verification.failed', resource_type='pending_registration', resource_id=str(pending.id))
+            AuditService.log_action('user.email_verification.failed', resource_type='pending_registration', resource_id=pending.id)
             raise ValueError("Código inválido.")
             
         # Sucesso - Mesma transação
@@ -103,7 +109,9 @@ class AuthService:
 
     @staticmethod
     def resend_code(pending_id):
-        pending = PendingEmailVerification.query.get(pending_id)
+        import uuid
+        pending_uuid = uuid.UUID(str(pending_id))
+        pending = PendingEmailVerification.query.get(pending_uuid)
         if not pending:
             raise ValueError("Registro pendente não encontrado.")
             
@@ -132,8 +140,12 @@ class AuthService:
         
         db.session.commit()
         
-        EmailService.send_verification_code(pending.email, code)
-        AuditService.log_action('user.email_verification.resent', resource_type='pending_registration', resource_id=str(pending.id))
+        try:
+            EmailService().send_verification_email(to=pending.email, name=pending.name, code=code)
+        except Exception as e:
+            raise ValueError("Não foi possível reenviar o código de confirmação. Tente novamente.")
+            
+        AuditService.log_action('user.email_verification.resent', resource_type='pending_registration', resource_id=pending.id)
 
     @staticmethod
     def authenticate(email, password):
