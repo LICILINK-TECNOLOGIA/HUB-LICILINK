@@ -87,6 +87,36 @@ config_by_name = dict(
 )
 
 
+def resolve_config_name(config_name=None):
+    """Resolve e valida o nome do ambiente usado por `create_app()`.
+
+    - Se `config_name` for fornecido (inclusive vazio), é normalizado
+      (espaços removidos, minúsculas) e validado contra `config_by_name`.
+    - Se `config_name` for `None` (não fornecido), lê `FLASK_ENV`; se a
+      variável de ambiente também estiver genuinamente ausente, usa
+      'development' diretamente, como conveniência exclusiva para
+      desenvolvimento local — sem tentar detectar VPS ou produção.
+    - Um ambiente vazio (explícito ou vindo de `FLASK_ENV=""`) ou
+      desconhecido levanta `RuntimeError` listando apenas os nomes de
+      ambiente permitidos, nunca variáveis ou valores sensíveis.
+    """
+    if config_name is None:
+        env_value = os.getenv('FLASK_ENV')
+        if env_value is None:
+            return 'development'
+        config_name = env_value
+
+    normalized = config_name.strip().lower()
+
+    if not normalized or normalized not in config_by_name:
+        allowed = ', '.join(sorted(config_by_name.keys()))
+        raise RuntimeError(
+            f"Ambiente inválido ou ausente. Defina um destes valores: {allowed}."
+        )
+
+    return normalized
+
+
 def configure_secret_key(app):
     """Valida ou gera a SECRET_KEY depois que a configuração da app foi carregada.
 
