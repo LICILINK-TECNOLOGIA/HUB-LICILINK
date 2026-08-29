@@ -4,7 +4,7 @@ from flask import Flask
 
 # Carrega as variáveis de ambiente antes de criar a aplicação
 load_dotenv()
-from .config import config_by_name, configure_secret_key
+from .config import config_by_name, configure_secret_key, configure_database_uri
 from .extensions import db, migrate, login_manager
 
 def create_app(config_name=None):
@@ -16,6 +16,8 @@ def create_app(config_name=None):
 
     # Valida/gera a SECRET_KEY assim que a configuração do ambiente é conhecida
     configure_secret_key(app)
+    # Resolve a URI do banco (driver explícito, sem congelamento por import)
+    configure_database_uri(app)
 
     # Import Models so Alembic can detect them
     from . import models

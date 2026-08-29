@@ -1,4 +1,5 @@
 import os
+import re
 import secrets
 from dotenv import load_dotenv
 
@@ -12,6 +13,21 @@ KNOWN_INSECURE_SECRET_KEYS = {
     'default-secret-key',
     'change-me-in-development',
 }
+
+# Único driver PostgreSQL instalado no projeto (ver requirements.txt: psycopg/psycopg-binary).
+# NÃO adicionar psycopg2 (ou qualquer outro driver) apenas para compatibilizar
+# URLs que declarem um dialeto diferente do instalado.
+POSTGRES_DIALECT_PREFIX = 'postgresql+psycopg://'
+
+# Reconhece `postgres://`, `postgresql://` (bare) e `postgresql+<driver>://`,
+# capturando o driver explícito (se houver) no grupo 2.
+_POSTGRES_SCHEME_PATTERN = re.compile(r'^(postgres(?:ql)?)(\+[A-Za-z0-9_]+)?://')
+
+# Mesmas credenciais de desenvolvimento local já usadas em docker-compose.dev.yml.
+# O compose só define o serviço `db` (PostgreSQL) — não há serviço/Dockerfile
+# para o Flask, então o cenário suportado é: Flask no host, PostgreSQL no
+# Docker, acessado pela porta publicada no host (5433, ver docker-compose.dev.yml).
+DEFAULT_DEVELOPMENT_DATABASE_URI = 'postgresql+psycopg://hub_user:hub_password@localhost:5433/hub_db'
 
 
 class Config:
@@ -40,7 +56,8 @@ class DevelopmentConfig(Config):
     DEBUG = True
     IS_PRODUCTION = False
     SESSION_COOKIE_SECURE = False
-    SQLALCHEMY_DATABASE_URI = os.getenv('DATABASE_URL', 'postgresql://hub_user:hub_password@localhost:5432/hub_db')
+    # SQLALCHEMY_DATABASE_URI é resolvida dinamicamente por configure_database_uri()
+    # em create_app(), para não congelar DATABASE_URL no momento da importação.
 
 class TestingConfig(Config):
     TESTING = True
@@ -54,13 +71,13 @@ class StagingConfig(Config):
     DEBUG = False
     IS_PRODUCTION = True
     SESSION_COOKIE_SECURE = True
-    SQLALCHEMY_DATABASE_URI = os.getenv('DATABASE_URL')
+    # SQLALCHEMY_DATABASE_URI é resolvida dinamicamente por configure_database_uri()
 
 class ProductionConfig(Config):
     DEBUG = False
     IS_PRODUCTION = True
     SESSION_COOKIE_SECURE = True
-    SQLALCHEMY_DATABASE_URI = os.getenv('DATABASE_URL')
+    # SQLALCHEMY_DATABASE_URI é resolvida dinamicamente por configure_database_uri()
 
 config_by_name = dict(
     development=DevelopmentConfig,
@@ -107,3 +124,74 @@ def configure_secret_key(app):
         # Development (ou qualquer ambiente não-produtivo sem chave própria):
         # gera uma chave temporária somente em memória, nunca persistida.
         app.config['SECRET_KEY'] = secret_key or secrets.token_hex(32)
+
+
+def _normalize_postgres_dialect(database_url):
+    """Normaliza o dialeto de uma URL PostgreSQL para o único driver instalado
+    no projeto (`psycopg` v3), usando uma política de allowlist estrita:
+
+    - `postgres://...` e `postgresql://...` (sem driver explícito) são
+      reescritas para `postgresql+psycopg://...`;
+    - `postgresql+psycopg://...` é preservada sem alteração;
+    - qualquer outro driver PostgreSQL explícito (`postgresql+psycopg2://`,
+      `postgresql+asyncpg://` etc.) é REJEITADO com `RuntimeError` antes que
+      o SQLAlchemy tente importar esse driver;
+    - URLs que não são PostgreSQL (ex.: `sqlite://`) são respeitadas sem
+      alteração.
+
+    A mensagem de erro nunca inclui a URI, usuário, senha, host ou nome do
+    banco — apenas o nome do dialeto rejeitado (que não é uma credencial).
+    """
+    if not database_url:
+        return database_url
+
+    match = _POSTGRES_SCHEME_PATTERN.match(database_url)
+    if not match:
+        return database_url  # não é uma URL PostgreSQL (ex.: sqlite)
+
+    explicit_driver = match.group(2)  # None, ou '+psycopg', '+psycopg2', '+asyncpg', ...
+
+    if explicit_driver is None:
+        # postgres:// ou postgresql:// sem driver explícito: normaliza.
+        rest = database_url[match.end():]
+        return POSTGRES_DIALECT_PREFIX + rest
+
+    if explicit_driver == '+psycopg':
+        return database_url  # já é o único driver instalado
+
+    dialect_name = explicit_driver.lstrip('+')
+    raise RuntimeError(
+        f"SQLALCHEMY_DATABASE_URI usa o dialeto PostgreSQL '{dialect_name}', que "
+        "não está instalado neste projeto (apenas o driver 'psycopg' v3 está "
+        "disponível). Use 'postgresql+psycopg://' explicitamente, ou omita o "
+        "driver na URL (será normalizado automaticamente)."
+    )
+
+
+def configure_database_uri(app):
+    """Resolve SQLALCHEMY_DATABASE_URI a partir do ambiente atual, no momento
+    da criação da aplicação (não em tempo de importação de `app.config`).
+
+    Config classes que já definem a URI explicitamente (ex.: TestingConfig,
+    com SQLite) não são afetadas. Em development sem `DATABASE_URL` externa,
+    usa o padrão local já documentado (Flask no host, PostgreSQL no Docker).
+    Em staging/produção, `DATABASE_URL` é obrigatória — a aplicação falha
+    explicitamente e antes de qualquer inicialização do SQLAlchemy caso
+    esteja ausente, sem nunca expor a URI/credenciais na mensagem de erro.
+    """
+    if app.config.get('SQLALCHEMY_DATABASE_URI'):
+        return
+
+    database_url = os.getenv('DATABASE_URL')
+
+    if app.config.get('IS_PRODUCTION'):
+        if not database_url:
+            raise RuntimeError(
+                "DATABASE_URL ausente. Defina a variável de ambiente DATABASE_URL "
+                "com a string de conexão do PostgreSQL (dialeto 'postgresql+psycopg://') "
+                "antes de iniciar a aplicação neste ambiente."
+            )
+    elif not database_url:
+        database_url = DEFAULT_DEVELOPMENT_DATABASE_URI
+
+    app.config['SQLALCHEMY_DATABASE_URI'] = _normalize_postgres_dialect(database_url)
