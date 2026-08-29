@@ -4,6 +4,41 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from .base import BaseModel
 from ..extensions import db
 
+# Comprimento mínimo/máximo exigido para a senha definitiva de um usuário
+# (registro e qualquer redefinição futura). O mínimo é deliberadamente igual
+# ao exigido pelo CLI administrativo (Issue #11, `MIN_ADMIN_PASSWORD_LENGTH`
+# em app/cli.py) para evitar duas políticas arbitrariamente diferentes — não
+# há MFA obrigatório implementado no HUB hoje que justificasse um mínimo
+# menor para usuários comuns. O máximo existe apenas para evitar entrada
+# excessiva (ex.: DoS via string extremamente longa), não por limitação do
+# algoritmo de hash.
+MIN_USER_PASSWORD_LENGTH = 12
+MAX_USER_PASSWORD_LENGTH = 128
+
+
+def validate_password_strength(password):
+    """Valida a força mínima/máxima de uma senha de usuário antes de
+    qualquer hash ou persistência.
+
+    A senha é validada exatamente como foi informada: nenhuma normalização
+    (strip, lower, Unicode) ou truncamento é aplicada em nenhum momento —
+    apenas checagens de tipo e comprimento. Não exige combinações artificiais
+    de maiúsculas/números/símbolos. Nunca inclui o valor da senha na
+    mensagem de erro.
+    """
+    if not isinstance(password, str):
+        raise ValueError("Senha inválida: deve ser uma string de texto.")
+    if password.strip() == "":
+        raise ValueError("Senha inválida: não pode ser vazia ou conter apenas espaços.")
+    if len(password) < MIN_USER_PASSWORD_LENGTH:
+        raise ValueError(
+            f"Senha inválida: deve conter ao menos {MIN_USER_PASSWORD_LENGTH} caracteres."
+        )
+    if len(password) > MAX_USER_PASSWORD_LENGTH:
+        raise ValueError(
+            f"Senha inválida: deve conter no máximo {MAX_USER_PASSWORD_LENGTH} caracteres."
+        )
+
 class Organization(BaseModel):
     __tablename__ = 'organizations'
 
@@ -30,9 +65,24 @@ class User(UserMixin, BaseModel):
     # Relacionamentos
     memberships = db.relationship('OrganizationMember', back_populates='user', cascade="all, delete-orphan")
 
+    @staticmethod
+    def hash_password(raw_password):
+        """Único ponto de geração de hash aceito para a senha definitiva do
+        usuário — valida a força internamente antes de hashear, então
+        nenhum chamador (`set_password`, o fluxo de registro, ou qualquer
+        código futuro) consegue gerar um hash a partir de uma senha inválida,
+        mesmo esquecendo de chamar `validate_password_strength` antes.
+        Reutilizável tanto a partir de uma instância de `User`
+        (`set_password`) quanto antes de o usuário existir (fluxo de
+        registro/verificação de e-mail)."""
+        validate_password_strength(raw_password)
+        return generate_password_hash(raw_password)
+
     def set_password(self, raw_password):
-        """Único mecanismo aceito para definir/alterar a senha do usuário."""
-        self.password_hash = generate_password_hash(raw_password)
+        """Único mecanismo aceito para definir/alterar a senha do usuário.
+
+        Delega toda a validação para `hash_password`."""
+        self.password_hash = self.hash_password(raw_password)
 
     def check_password(self, raw_password):
         return check_password_hash(self.password_hash, raw_password)
