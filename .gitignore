@@ -2,6 +2,8 @@ venv/
 .env
 .env.*
 !.env.example
+cookies.txt
+cookies*.txt
 __pycache__/
 *.pyc
 .pytest_cache/
