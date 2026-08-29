@@ -1,5 +1,6 @@
 from flask_login import UserMixin
 from sqlalchemy.dialects.postgresql import UUID
+from werkzeug.security import generate_password_hash, check_password_hash
 from .base import BaseModel
 from ..extensions import db
 
@@ -28,6 +29,13 @@ class User(UserMixin, BaseModel):
 
     # Relacionamentos
     memberships = db.relationship('OrganizationMember', back_populates='user', cascade="all, delete-orphan")
+
+    def set_password(self, raw_password):
+        """Único mecanismo aceito para definir/alterar a senha do usuário."""
+        self.password_hash = generate_password_hash(raw_password)
+
+    def check_password(self, raw_password):
+        return check_password_hash(self.password_hash, raw_password)
 
 class OrganizationMember(BaseModel):
     __tablename__ = 'organization_members'
