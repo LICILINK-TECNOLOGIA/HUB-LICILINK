@@ -4,16 +4,19 @@ from flask import Flask
 
 # Carrega as variáveis de ambiente antes de criar a aplicação
 load_dotenv()
-from .config import config_by_name
+from .config import config_by_name, configure_secret_key
 from .extensions import db, migrate, login_manager
 
 def create_app(config_name=None):
     if config_name is None:
         config_name = os.getenv('FLASK_ENV', 'development')
-        
+
     app = Flask(__name__)
     app.config.from_object(config_by_name[config_name])
-    
+
+    # Valida/gera a SECRET_KEY assim que a configuração do ambiente é conhecida
+    configure_secret_key(app)
+
     # Import Models so Alembic can detect them
     from . import models
     
