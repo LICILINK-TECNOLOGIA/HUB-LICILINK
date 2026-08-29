@@ -1,15 +1,13 @@
-import os
 from dotenv import load_dotenv
 from flask import Flask
 
 # Carrega as variáveis de ambiente antes de criar a aplicação
 load_dotenv()
-from .config import config_by_name, configure_secret_key, configure_database_uri
+from .config import config_by_name, resolve_config_name, configure_secret_key, configure_database_uri
 from .extensions import db, migrate, login_manager
 
 def create_app(config_name=None):
-    if config_name is None:
-        config_name = os.getenv('FLASK_ENV', 'development')
+    config_name = resolve_config_name(config_name)
 
     app = Flask(__name__)
     app.config.from_object(config_by_name[config_name])
