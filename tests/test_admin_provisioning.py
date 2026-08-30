@@ -1,11 +1,14 @@
 import sys
 import importlib
+from datetime import datetime, timedelta
+from unittest.mock import patch
 
 import click
 import pytest
 
 from app.extensions import db
 from app.models.identity import User
+from app.services.auth_service import AuthService
 
 # Valores sintéticos, exclusivos desta suíte de testes.
 SYNTHETIC_ADMIN_PASSWORD = "synthetic-strong-password-123"
@@ -206,6 +209,99 @@ class TestCreateAdminCommand:
 
         assert result.exit_code != 0
         assert User.query.filter_by(email="admin.rollback@example.com").count() == 0
+
+    def test_password_hash_never_appears_in_output(self, cli_runner):
+        result = cli_runner.invoke(
+            args=["create-admin", "--name", "Admin Hash Saida", "--email", "admin.hashsaida@example.com"],
+            input=_password_input(SYNTHETIC_ADMIN_PASSWORD),
+        )
+        admin = User.query.filter_by(email="admin.hashsaida@example.com").first()
+        assert admin is not None
+        assert admin.password_hash not in result.output
+
+    def test_successful_creation_results_in_exactly_one_user(self, cli_runner):
+        assert User.query.count() == 0
+        cli_runner.invoke(
+            args=["create-admin", "--name", "Admin Unico", "--email", "admin.unico@example.com"],
+            input=_password_input(SYNTHETIC_ADMIN_PASSWORD),
+        )
+        assert User.query.count() == 1
+
+
+class TestCreateAdminSetsVerifiedEmail:
+    """Issue #17: regressão do bug em que create_admin_command criava o
+    administrador com email_verified_at=None, impedindo login imediato
+    ("E-mail não verificado" em AuthService.authenticate)."""
+
+    def test_created_admin_has_email_verified_at_set(self, cli_runner):
+        before = datetime.utcnow()
+        cli_runner.invoke(
+            args=["create-admin", "--name", "Admin Verificado", "--email", "admin.verificado@example.com"],
+            input=_password_input(SYNTHETIC_ADMIN_PASSWORD),
+        )
+        after = datetime.utcnow()
+
+        admin = User.query.filter_by(email="admin.verificado@example.com").first()
+        assert admin is not None
+        assert admin.email_verified_at is not None
+        # Confere que a data ficou dentro da janela da execução do teste
+        # (folga de 1s para variação de precisão), usando a mesma convenção
+        # de UTC ingênuo (datetime.utcnow()) já usada em
+        # AuthService.verify_email() e nos demais models do projeto.
+        assert before - timedelta(seconds=1) <= admin.email_verified_at <= after + timedelta(seconds=1)
+
+    def test_created_admin_remains_active_and_internal_admin(self, cli_runner):
+        cli_runner.invoke(
+            args=["create-admin", "--name", "Admin Flags", "--email", "admin.flags@example.com"],
+            input=_password_input(SYNTHETIC_ADMIN_PASSWORD),
+        )
+
+        admin = User.query.filter_by(email="admin.flags@example.com").first()
+        assert admin is not None
+        assert admin.is_active is True
+        assert admin.is_internal_admin is True
+
+    def test_created_admin_can_authenticate_immediately(self, cli_runner):
+        cli_runner.invoke(
+            args=["create-admin", "--name", "Admin Login Imediato", "--email", "admin.loginimediato@example.com"],
+            input=_password_input(SYNTHETIC_ADMIN_PASSWORD),
+        )
+
+        authenticated_user = AuthService.authenticate(
+            "admin.loginimediato@example.com", SYNTHETIC_ADMIN_PASSWORD
+        )
+        assert authenticated_user is not None
+        assert authenticated_user.email == "admin.loginimediato@example.com"
+
+    @patch("app.services.auth_service.EmailService.send_verification_email")
+    def test_regular_user_registration_still_requires_verification(self, mock_send, app):
+        # Confirma que a correção do CLI (que passou a preencher
+        # email_verified_at em create-admin) não afeta o fluxo público real
+        # de autorregistro: exercitamos AuthService.start_registration/
+        # verify_email diretamente (não construímos User manualmente), e o
+        # envio de e-mail é mockado para não disparar nenhum e-mail externo.
+        with app.app_context():
+            mock_send.return_value = None
+            email = "usuario.naoverificado@example.com"
+
+            pending = AuthService.start_registration(
+                "Usuario Comum Registrado", email, SYNTHETIC_ADMIN_PASSWORD
+            )
+
+            # Antes da verificação, nenhum User existe ainda (só a pendência)
+            # e o login correspondente não é possível.
+            assert User.query.filter_by(email=email).first() is None
+            assert AuthService.authenticate(email, SYNTHETIC_ADMIN_PASSWORD) is None
+
+            code = mock_send.call_args[1]["code"]
+            verified_user = AuthService.verify_email(pending.id, code)
+
+            # Após a verificação real (mesmo fluxo público de autorregistro),
+            # o login passa a funcionar normalmente.
+            assert verified_user.email_verified_at is not None
+            authenticated_user = AuthService.authenticate(email, SYNTHETIC_ADMIN_PASSWORD)
+            assert authenticated_user is not None
+            assert authenticated_user.email == email
 
 
 class TestResetAdminPasswordCommand:
