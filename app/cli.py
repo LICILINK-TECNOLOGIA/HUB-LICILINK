@@ -61,10 +61,17 @@ def create_admin_command(name, email):
 
     password = _prompt_admin_password("Senha do novo administrador")
 
+    # Administrador provisionado diretamente por quem opera o servidor (não
+    # é um cadastro externo que precise confirmar posse do e-mail) - já
+    # nasce com o e-mail verificado, para poder autenticar imediatamente
+    # via AuthService.authenticate(), sem correção manual no banco. Mesma
+    # convenção de data (UTC ingênuo, sem timezone) já usada em
+    # AuthService.verify_email() e em app.models.identity.User.
     admin_user = User(
         name=name,
         email=normalized_email,
         is_internal_admin=True,
+        email_verified_at=datetime.utcnow(),
     )
     admin_user.set_password(password)
     try:
