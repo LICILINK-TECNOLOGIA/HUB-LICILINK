@@ -3,6 +3,7 @@ from flask.cli import with_appcontext
 from .extensions import db
 from .models.identity import User, PendingEmailVerification
 from .services.audit_service import AuditService
+from .services.bootstrap_service import BootstrapService, StructuralCatalogConflictError
 from datetime import datetime
 
 # Comprimento mínimo exigido para senhas de administrador provisionadas via CLI.
@@ -141,7 +142,53 @@ def cleanup_expired_verifications_command():
     else:
         click.echo("Nenhum registro expirado encontrado para limpeza.")
 
+def _format_catalog_list(items):
+    return ", ".join(items) if items else "nenhum"
+
+
+@click.command("bootstrap-structural-data")
+@with_appcontext
+def bootstrap_structural_data_command():
+    """Garante a existência do catálogo estrutural mínimo do HUB LiciLink:
+    papéis (owner, member) e produtos (kalender, gedo, hunt).
+
+    Idempotente quando não há conflito: em banco vazio ou parcialmente
+    preenchido, cria somente os registros ausentes e nunca duplica.
+
+    Bloqueante em conflito: se um papel/produto já existir com metadados
+    diferentes do catálogo canônico, o comando NÃO altera nada, NÃO cria
+    nenhum dos registros ausentes (mesmo os sem conflito) e encerra com
+    código de saída diferente de zero - sucesso parcial nunca acontece.
+    A divergência deve ser resolvida manualmente antes de tentar de novo;
+    este comando nunca sobrescreve ou reconcilia um registro existente.
+
+    Não cria usuários, organizações, vínculos, permissões, nem concede
+    acesso de produto a nenhuma organização - apenas o catálogo estrutural.
+    Não é executado automaticamente na inicialização da aplicação; deve ser
+    invocado explicitamente (`flask bootstrap-structural-data`).
+    """
+    try:
+        result = BootstrapService.ensure_structural_catalog()
+    except StructuralCatalogConflictError as exc:
+        click.echo("Bootstrap estrutural abortado: conflito de metadados detectado.")
+        if exc.conflicting_roles:
+            click.echo(f"Papéis conflitantes (não alterados): {_format_catalog_list(exc.conflicting_roles)}")
+        if exc.conflicting_products:
+            click.echo(f"Produtos conflitantes (não alterados): {_format_catalog_list(exc.conflicting_products)}")
+        click.echo("Nenhuma alteração foi salva. Resolva a divergência manualmente antes de tentar novamente.")
+        raise click.ClickException("Bootstrap estrutural abortado por conflito de metadados.")
+    except Exception as exc:
+        raise click.ClickException(str(exc))
+
+    click.echo("Bootstrap estrutural concluído.")
+    click.echo(f"Papéis criados: {_format_catalog_list(result['created_roles'])}")
+    click.echo(f"Papéis já existentes (compatíveis): {_format_catalog_list(result['existing_roles'])}")
+    click.echo(f"Produtos criados: {_format_catalog_list(result['created_products'])}")
+    click.echo(f"Produtos já existentes (compatíveis): {_format_catalog_list(result['existing_products'])}")
+
+
 def init_cli(app):
     app.cli.add_command(create_admin_command)
     app.cli.add_command(reset_admin_password_command)
     app.cli.add_command(cleanup_expired_verifications_command)
+    app.cli.add_command(bootstrap_structural_data_command)
