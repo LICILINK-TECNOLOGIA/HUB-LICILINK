@@ -1,8 +1,29 @@
+import enum
+
 from flask_login import UserMixin
 from sqlalchemy.dialects.postgresql import UUID
 from werkzeug.security import generate_password_hash, check_password_hash
 from .base import BaseModel
 from ..extensions import db
+
+
+class OrganizationMemberStatus(str, enum.Enum):
+    """Estados controlados do vínculo pessoa-organização.
+
+    Usa `str` como base para que o valor do enum seja diretamente comparável
+    e serializável como string (ex.: `OrganizationMemberStatus.ACTIVE == 'active'`
+    é `True`), mantendo a coluna no banco como `String` simples (mesmo padrão
+    já adotado por `OrganizationProduct.status`), mas agora com validação
+    real via `CHECK` constraint e Enum Python — nunca string livre.
+    """
+
+    ACTIVE = 'active'
+    SUSPENDED = 'suspended'
+    REMOVED = 'removed'
+
+
+# Único status que autoriza acesso à organização e aos produtos contratados.
+ACTIVE_ORGANIZATION_MEMBER_STATUS = OrganizationMemberStatus.ACTIVE.value
 
 # Comprimento mínimo/máximo exigido para a senha definitiva de um usuário
 # (registro e qualquer redefinição futura). O mínimo é deliberadamente igual
@@ -91,16 +112,33 @@ class OrganizationMember(BaseModel):
     __tablename__ = 'organization_members'
     __table_args__ = (
         db.UniqueConstraint('user_id', 'organization_id', name='uq_org_member_user_org'),
+        db.CheckConstraint(
+            "status IN ('active', 'suspended', 'removed')",
+            name='ck_org_member_status_valid',
+        ),
     )
 
     user_id = db.Column(UUID(as_uuid=True), db.ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
     organization_id = db.Column(UUID(as_uuid=True), db.ForeignKey('organizations.id', ondelete='CASCADE'), nullable=False, index=True)
     role_id = db.Column(UUID(as_uuid=True), db.ForeignKey('roles.id', ondelete='RESTRICT'), nullable=False)
+    # Estado controlado do vínculo (ver OrganizationMemberStatus). Somente
+    # 'active' autoriza acesso à organização e aos produtos contratados.
+    # 'suspended'/'removed' nunca apagam a linha - preservam histórico.
+    status = db.Column(
+        db.String(20),
+        nullable=False,
+        default=OrganizationMemberStatus.ACTIVE.value,
+        server_default=OrganizationMemberStatus.ACTIVE.value,
+    )
 
     # Relacionamentos
     user = db.relationship('User', back_populates='memberships')
     organization = db.relationship('Organization', back_populates='members')
     role = db.relationship('Role')
+
+    @property
+    def is_active_membership(self):
+        return self.status == ACTIVE_ORGANIZATION_MEMBER_STATUS
 
 class PendingEmailVerification(BaseModel):
     __tablename__ = 'pending_email_verifications'
