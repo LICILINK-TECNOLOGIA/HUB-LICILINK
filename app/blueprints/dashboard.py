@@ -17,7 +17,7 @@ def index():
     current_org = orgs[0] if orgs else None
     
     if current_org:
-        launcher_items = AccessService.get_organization_products(current_org.id)
+        launcher_items = AccessService.get_organization_products(current_user.id, current_org.id)
     else:
         launcher_items = []
         
