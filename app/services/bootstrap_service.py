@@ -5,16 +5,17 @@ from ..models import Role, Product
 # Issue #18: único ponto de definição do catálogo estrutural mínimo do HUB
 # (papéis e produtos). CLI, serviço e testes devem sempre importar estas
 # constantes - nunca redeclarar os identificadores/metadados em outro lugar.
+# STRUCTURAL_ROLES e STRUCTURAL_PRODUCTS são o catálogo canônico: nome,
+# descrição e código de cada papel/produto vêm exclusivamente daqui.
 #
-# Metadados extraídos das únicas fontes já existentes no projeto para cada
-# produto (seed_data.py, histórico). A URL de cada produto NÃO é
-# armazenada aqui como valor fixo - o catálogo guarda apenas a chave de
-# configuração (`url_config_key`) correspondente já existente em
-# app/config.py (Config.L_KALENDER_URL/L_GEDO_URL/L_HUNT_URL, todas
-# sobrescrevíveis por variável de ambiente). O valor real da URL só é
-# resolvido em tempo de execução, via `current_app.config`, dentro de
-# `ensure_structural_catalog()` - nunca lido da classe Config no momento do
-# import deste módulo, para não congelar um valor de um ambiente errado.
+# A URL de cada produto NÃO é armazenada aqui como valor fixo - o catálogo
+# guarda apenas a chave de configuração (`url_config_key`) correspondente
+# já existente em app/config.py (Config.L_KALENDER_URL/L_GEDO_URL/
+# L_HUNT_URL, todas sobrescrevíveis por variável de ambiente). O valor real
+# da URL só é resolvido em tempo de execução, via `current_app.config`,
+# dentro de `ensure_structural_catalog()` - nunca lido da classe Config no
+# momento do import deste módulo, para não congelar um valor de um
+# ambiente errado.
 
 STRUCTURAL_ROLES = (
     {
