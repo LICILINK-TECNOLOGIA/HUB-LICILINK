@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# Permissão mínima necessária: só ler o conteúdo do repositório para fazer
+# checkout. Nenhum passo deste workflow escreve no repositório, comenta em
+# PR/Issue, faz deploy ou push - por isso não há motivo para conceder mais
+# do que leitura.
+permissions:
+  contents: read
+
+# Um grupo por PR (quando existir) ou por ref (em push direto para main) -
+# nunca mistura execuções de PRs diferentes entre si, e cada branch/PR
+# cancela sua própria execução anterior quando um novo commit chega.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Id do job estável ("test") - usado como nome de referência para uma
+  # futura branch protection (fora do escopo da Issue #25). Não renomear
+  # sem atualizar qualquer proteção de branch que passe a depender dele.
+  test:
+    name: test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.14"]
+    steps:
+      # actions/checkout, tag v7.0.1, pinado pelo SHA completo do commit
+      # (verificado em https://github.com/actions/checkout, action oficial
+      # mantida pela GitHub - nunca action de terceiro).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # O job executa pytest, que roda código do próprio PR (fixtures,
+          # conftest.py, etc.) - persist-credentials: false garante que
+          # nenhuma credencial de push fique disponível nesse ambiente,
+          # mesmo que código do PR tente lê-la.
+          persist-credentials: false
+
+      # actions/setup-python, tag v7.0.0, pinado pelo SHA completo do
+      # commit (verificado em https://github.com/actions/setup-python,
+      # action oficial mantida pela GitHub - nunca action de terceiro).
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      # Nenhuma variável de ambiente/secret é definida em nenhum passo -
+      # create_app('testing') não precisa de nenhuma (ver docs/ci.md).
+      - name: Instalar dependências
+        run: python -m pip install -r requirements.txt
+
+      - name: Executar suíte de testes
+        run: pytest
+
+      - name: Verificar sintaxe (app, tests, run.py, migrations)
+        run: python -m compileall -q app tests run.py migrations
