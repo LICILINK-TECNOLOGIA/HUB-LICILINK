@@ -929,3 +929,153 @@ class TestDashboardRouteDoesNotLeakValueError:
         # resultar em erro 500.
         dashboard_response = client.get('/')
         assert dashboard_response.status_code == 200
+
+
+class TestDashboardDisplaysOrganizationLegalName:
+    """Issue #32: o dashboard deve exibir `Organization.legal_name` - o
+    atributo real do model desde a migration b0a61c555d44 - e nunca o
+    atributo `name`, que não existe mais em `Organization` (renderizaria
+    como string vazia via Undefined do Jinja, sem erro)."""
+
+    SYNTHETIC_PASSWORD = 'senha-sintetica-issue-32-123'
+
+    def _create_linked_user(self, legal_name, email):
+        org = Organization(legal_name=legal_name)
+        db.session.add(org)
+        db.session.flush()
+
+        user = User(
+            name='Usuario Issue 32',
+            email=email,
+            email_verified_at=datetime.utcnow(),
+        )
+        user.set_password(self.SYNTHETIC_PASSWORD)
+        db.session.add(user)
+        db.session.flush()
+
+        product = Product(
+            code=f'produto-issue-32-{uuid.uuid4().hex[:8]}',
+            name='Produto Issue 32',
+            url='https://produto-issue-32.local',
+        )
+        db.session.add(product)
+        db.session.flush()
+
+        org_product = OrganizationProduct(organization_id=org.id, product_id=product.id, status='active')
+        db.session.add(org_product)
+        db.session.commit()
+
+        OrganizationService.add_member(org.id, user.id, 'member')
+        return org, user, product
+
+    def _login(self, client, email):
+        return client.post('/login', data={'email': email, 'password': self.SYNTHETIC_PASSWORD})
+
+    def test_active_member_gets_200_and_legal_name_rendered_non_empty(self, client, app):
+        with app.app_context():
+            self._create_linked_user('Organizacao Issue 32 LTDA', 'usuario.issue32.basico@example.com')
+
+        self._login(client, 'usuario.issue32.basico@example.com')
+        response = client.get('/')
+
+        assert response.status_code == 200
+        html = response.data.decode('utf-8')
+        assert 'Organizacao Issue 32 LTDA' in html
+        # Regressão: `org.name` (inexistente) renderiza como Undefined do
+        # Jinja, isto é, string vazia, sem erro - o bloco não pode ficar
+        # vazio.
+        assert '<strong></strong>' not in html
+
+    def test_accented_legal_name_is_displayed_correctly(self, client, app):
+        with app.app_context():
+            self._create_linked_user('Organização São João Ltda', 'usuario.issue32.acentos@example.com')
+
+        self._login(client, 'usuario.issue32.acentos@example.com')
+        response = client.get('/')
+
+        html = response.data.decode('utf-8')
+        assert 'Organização São João Ltda' in html
+
+    def test_html_characters_in_legal_name_are_escaped_not_interpreted(self, client, app):
+        dangerous_name = 'Nome <script>alert(1)</script> & "Cia"'
+        with app.app_context():
+            self._create_linked_user(dangerous_name, 'usuario.issue32.escaping@example.com')
+
+        self._login(client, 'usuario.issue32.escaping@example.com')
+        response = client.get('/')
+
+        html = response.data.decode('utf-8')
+        assert '<script>alert(1)</script>' not in html
+        assert '&lt;script&gt;alert(1)&lt;/script&gt;' in html
+        assert '&amp;' in html
+
+    def test_unlinked_user_does_not_see_any_organization(self, client, app):
+        with app.app_context():
+            org = Organization(legal_name='Organizacao Sem Vinculo Issue 32')
+            db.session.add(org)
+            db.session.flush()
+
+            user = User(
+                name='Usuario Sem Vinculo Issue 32',
+                email='usuario.issue32.semvinculo@example.com',
+                email_verified_at=datetime.utcnow(),
+            )
+            user.set_password(self.SYNTHETIC_PASSWORD)
+            db.session.add(user)
+            db.session.commit()
+
+        self._login(client, 'usuario.issue32.semvinculo@example.com')
+        response = client.get('/')
+
+        assert response.status_code == 200
+        html = response.data.decode('utf-8')
+        assert 'Organizacao Sem Vinculo Issue 32' not in html
+        assert 'Aguardando vincula' in html
+
+    def test_internal_admin_without_membership_does_not_receive_client_organization(self, client, app):
+        with app.app_context():
+            org = Organization(legal_name='Organizacao Cliente Issue 32 Admin')
+            db.session.add(org)
+
+            internal_admin = User(
+                name='Admin Interno Issue 32',
+                email='admin.interno.issue32@example.com',
+                is_internal_admin=True,
+                email_verified_at=datetime.utcnow(),
+            )
+            internal_admin.set_password(self.SYNTHETIC_PASSWORD)
+            db.session.add(internal_admin)
+            db.session.commit()
+
+        self._login(client, 'admin.interno.issue32@example.com')
+        response = client.get('/')
+
+        assert response.status_code == 200
+        html = response.data.decode('utf-8')
+        assert 'Organizacao Cliente Issue 32 Admin' not in html
+        assert 'Aguardando vincula' in html
+
+    def test_organization_model_has_no_dynamic_name_attribute(self, app):
+        # Prova direta de que o template não pode depender de `org.name`:
+        # o atributo simplesmente não existe no model, desde a migration
+        # b0a61c555d44 (drop_column('name')).
+        with app.app_context():
+            org = Organization(legal_name='Organizacao Sem Atributo Name Issue 32')
+            db.session.add(org)
+            db.session.commit()
+            assert not hasattr(org, 'name')
+
+    def test_permissions_and_product_listing_remain_unaffected(self, client, app):
+        with app.app_context():
+            self._create_linked_user('Organizacao Produtos Issue 32', 'usuario.issue32.produtos@example.com')
+
+        self._login(client, 'usuario.issue32.produtos@example.com')
+        response = client.get('/')
+
+        assert response.status_code == 200
+        html = response.data.decode('utf-8')
+        # A correção não alterou AccessService/OrganizationService: a
+        # listagem de produtos e o status de acesso continuam corretos.
+        assert 'Produto Issue 32' in html
+        assert 'status-active' in html
+        assert 'Acessar Sistema' in html
