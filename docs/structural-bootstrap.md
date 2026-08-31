@@ -82,11 +82,28 @@ flask bootstrap-structural-data
   executado quando alguém chama `flask bootstrap-structural-data`
   explicitamente - não faz parte da inicialização automática da aplicação.
 
-## Diferença entre bootstrap estrutural e dados de demonstração
+## `flask bootstrap-structural-data` é o único mecanismo oficial
 
-Este comando cuida apenas do **catálogo estrutural mínimo** (papéis e
-produtos) - o vocabulário que o resto do sistema espera encontrar. Ele não
-substitui `seed_data.py` (dados de demonstração: usuários, organizações e
-concessões de produto de exemplo) nem depende dele. `seed_data.py`
-permanece fora do escopo deste comando e não deve ser executado como parte
-deste bootstrap.
+Este é o **único** comando suportado para criar o catálogo estrutural
+mínimo (papéis e produtos) do HUB LiciLink - não há script alternativo de
+"seed"/dados de demonstração no projeto, e nenhum é necessário. Ele cria
+somente os papéis e produtos listados acima; dados fictícios (usuários,
+organizações, senhas de exemplo) nunca fazem parte do bootstrap de
+produção, nem deste comando nem de nenhum outro.
+
+Para os demais recursos, cada um tem seu próprio fluxo oficial, nenhum
+deles sobreposto por este comando:
+
+- **Administradores internos**: `flask create-admin` (ver
+  [`docs/admin-cli.md`](./admin-cli.md)) - prompt interativo com senha
+  oculta, nunca senha fixa no código.
+- **Usuários finais**: fluxo público normal de cadastro e verificação de
+  e-mail (`AuthService.start_registration`/`verify_email`).
+- **Organizações e vínculos** (`Organization`, `OrganizationMember`): telas
+  e serviços administrativos próprios do sistema (`OrganizationService`),
+  nunca por um script de bootstrap.
+
+`flask bootstrap-structural-data` continua **idempotente** quando o
+catálogo existente já é compatível com o canônico, e os **conflitos
+continuam bloqueantes e atômicos** (ver seção acima) - nenhuma mudança de
+comportamento em relação ao que já está documentado neste arquivo.
