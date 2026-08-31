@@ -86,7 +86,54 @@ class OrganizationService:
         return org
 
     @staticmethod
+    def _user_is_internal_admin(user_id):
+        """Predicado central único (Issue #19): verdadeiro se o usuário
+        existir e for administrador interno (`User.is_internal_admin=True`).
+
+        Esta é a ÚNICA função que lê `User.is_internal_admin` para decidir
+        elegibilidade de vínculo organizacional - todo validador (que
+        levanta erro) e toda consulta (que filtra/oculta) usam este mesmo
+        predicado, nunca reimplementam a checagem, para a decisão nunca
+        divergir entre os pontos que a aplicam."""
+        user = User.query.filter_by(id=user_id).first()
+        return user is not None and user.is_internal_admin
+
+    @staticmethod
+    def _reject_internal_admin_as_member(user_id):
+        """Política central (Issue #19, decisão de produto já tomada):
+        um usuário com `User.is_internal_admin=True` nunca pode ter um
+        vínculo ATIVO como `OrganizationMember`, nem ter esse vínculo
+        administrado como se fosse legítimo. Usado por:
+        - `add_member` - nunca cria um novo vínculo;
+        - `_apply_status_transition`, quando `new_status='active'` - nunca
+          reativa (`reactivate_member`) nem restaura
+          (`restore_removed_member`) um vínculo legado suspenso/removido;
+        - `change_member_role` - nunca promove/rebaixa/reorganiza o papel
+          de um vínculo (mesmo legado), pois isso administraria como
+          legítimo um vínculo que nunca deveria existir.
+
+        A administração interna permanece inteiramente separada de
+        Role/OrganizationMember; ela usa suas próprias rotas
+        (`internal_admin_required`), nunca este mecanismo -
+        `is_internal_admin` nunca é bypass nem concede/nega acesso
+        organizacional por si só, é apenas um impeditivo de vínculo.
+
+        Levanta `ValueError` ANTES de qualquer lock, mutação,
+        `Role`/`OrganizationMember`/`AuditLog` ser criado/alterado e antes
+        de qualquer `db.session.commit()` - deve ser chamado como a
+        primeira validação em cada um dos pontos de entrada acima. Nunca
+        modifica um vínculo já existente por si só - apenas impede que a
+        operação chamadora prossiga. Suspender/remover um vínculo legado
+        (saneamento) NÃO passa por aqui - continua sempre permitido."""
+        if OrganizationService._user_is_internal_admin(user_id):
+            raise ValueError(
+                "Administradores internos não podem ser vinculados como membros de organizações clientes."
+            )
+
+    @staticmethod
     def add_member(organization_id, user_id, role_name):
+        OrganizationService._reject_internal_admin_as_member(user_id)
+
         # Verifica se já existe um vínculo, em qualquer status. Nunca cria
         # uma segunda linha (violaria a constraint de unicidade) nem reativa
         # silenciosamente um vínculo removido/suspenso - isso deve passar
@@ -135,6 +182,12 @@ class OrganizationService:
     @staticmethod
     def change_member_role(organization_id, user_id, new_role_name):
         try:
+            # Issue #19: um vínculo (mesmo legado) de administrador interno
+            # nunca pode ter o papel administrado/reorganizado - isso o
+            # trataria como um vínculo legítimo. Checado ANTES do lock e de
+            # qualquer leitura/mutação de OrganizationMember.
+            OrganizationService._reject_internal_admin_as_member(user_id)
+
             # Bloqueia a linha da Organization ANTES de contar owners ativos
             # ou alterar qualquer papel - mesma invariante, mesmo lock e
             # mesma ordem de `_apply_status_transition` (ver
@@ -213,8 +266,22 @@ class OrganizationService:
         do AuditLog ou o commit final), TUDO é revertido via
         `db.session.rollback()` - nunca há commit intermediário, e o
         rollback também libera o lock da Organization imediatamente (nunca
-        detido além do necessário)."""
+        detido além do necessário).
+
+        Issue #19: se a transição leva o vínculo para 'active' (caso de
+        `reactivate_member`, suspended->active, e `restore_removed_member`,
+        removed->active), a política central
+        `_reject_internal_admin_as_member` é aplicada ANTES de adquirir o
+        lock ou tocar qualquer dado - um administrador interno nunca pode
+        ter um vínculo legado (suspenso/removido) transformado em ativo por
+        aqui. Transições para 'suspended'/'removed' NÃO passam por essa
+        checagem - suspender/remover um vínculo legado inválido continua
+        sempre possível, para permitir saneamento sem deixar o vínculo
+        preso em um estado impossível de corrigir."""
         try:
+            if new_status == OrganizationMemberStatus.ACTIVE.value:
+                OrganizationService._reject_internal_admin_as_member(user_id)
+
             OrganizationService._lock_organization_row(organization_id)
 
             if new_status != OrganizationMemberStatus.ACTIVE.value:
@@ -356,7 +423,22 @@ class OrganizationService:
     @staticmethod
     def get_user_organizations(user_id):
         """Retorna somente as organizações às quais o usuário possui vínculo
-        ATIVO. Vínculos suspensos ou removidos nunca aparecem aqui."""
+        ATIVO. Vínculos suspensos ou removidos nunca aparecem aqui.
+
+        Issue #19: retorna lista vazia para administrador interno
+        (`User.is_internal_admin=True`), mesmo que exista um vínculo ativo
+        legado no banco - sem alterar a linha. Usa o mesmo predicado central
+        (`_user_is_internal_admin`) de `get_active_membership`/
+        `_reject_internal_admin_as_member`, para a decisão nunca divergir
+        entre os pontos que a aplicam. Esta função é usada por
+        `dashboard.index()` para escolher a organização "atual" do usuário
+        - retornar vazio aqui impede que uma organização cliente legada
+        chegue a ser selecionada como `current_org` para um administrador
+        interno, e portanto impede que `AccessService.get_organization_products`
+        chegue a ser chamado (e levante `ValueError`) nesse fluxo."""
+        if OrganizationService._user_is_internal_admin(user_id):
+            return []
+
         memberships = OrganizationMember.query.filter_by(
             user_id=user_id,
             status=OrganizationMemberStatus.ACTIVE.value,
@@ -369,9 +451,27 @@ class OrganizationService:
         se o usuário possui vínculo ativo com esta organização especfica.
         Retorna o OrganizationMember se ativo, ou None caso contrário
         (inexistente, suspenso ou removido) - uso previsto para qualquer
-        seleção de organização ativa e para o futuro handoff de SSO."""
-        return OrganizationMember.query.filter_by(
+        seleção de organização ativa e para o futuro handoff de SSO. Esse
+        contrato (OrganizationMember ou None, nunca exceção) é preservado
+        sem alteração - quem precisa tratar "sem vínculo" como erro (ex.:
+        `AccessService.get_organization_products`) já faz essa conversão
+        no próprio chamador.
+
+        Issue #19: também retorna None se o usuário do vínculo for um
+        administrador interno (`User.is_internal_admin=True`, mesmo
+        predicado central `_user_is_internal_admin` usado por
+        `_reject_internal_admin_as_member`/`get_user_organizations`), mesmo
+        que a linha em si esteja com status 'active' - cobre o vínculo
+        legado que possa ter sido criado antes desta política existir, sem
+        precisar alterar a linha. Este é o único portão de autorização
+        usado por `AccessService.get_organization_products`, então a mesma
+        checagem central protege automaticamente o acesso a produtos, sem
+        exigir nenhuma mudança em AccessService."""
+        membership = OrganizationMember.query.filter_by(
             user_id=user_id,
             organization_id=organization_id,
             status=OrganizationMemberStatus.ACTIVE.value,
         ).first()
+        if membership is not None and OrganizationService._user_is_internal_admin(user_id):
+            return None
+        return membership
