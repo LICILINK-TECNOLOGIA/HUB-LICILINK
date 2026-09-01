@@ -1,3 +1,5 @@
+import uuid
+
 from flask import Blueprint, current_app, render_template, request, flash, redirect, url_for
 from flask_login import login_required, current_user
 from ..decorators import internal_admin_required
@@ -7,6 +9,18 @@ from ..extensions import db
 from ..services.access_service import AccessService, ProductAccessError, ProductAccessOperationError
 
 admin_bp = Blueprint('admin', __name__, url_prefix='/admin')
+
+
+def _parse_form_uuid(field_name):
+    """Converte um campo de formulário (sempre string) para `uuid.UUID`
+    estrito - levanta `TypeError`/`ValueError` se ausente ou malformado,
+    sem normalizar, sem aceitar valor parcial/prefixo e sem nenhum
+    fallback. Nunca loga nem inclui o valor recebido em nenhuma mensagem
+    (quem chama decide a mensagem segura e o redirect); usado pelas rotas
+    cujo campo de UUID vem de formulário, nunca do conversor `<uuid:...>`
+    da própria URL (esse já é convertido automaticamente pelo Flask antes
+    da view rodar)."""
+    return uuid.UUID(request.form.get(field_name))
 
 @admin_bp.before_request
 @login_required
@@ -36,7 +50,7 @@ def crm_leads():
     leads = Lead.query.order_by(Lead.created_at.desc()).all()
     return render_template('admin/crm_leads.html', leads=leads)
 
-from ..services.organization_service import OrganizationService
+from ..services.organization_service import OrganizationService, OrganizationError, OrganizationOperationError
 from ..models.authorization import Role
 
 @admin_bp.route('/organizations/new', methods=['GET'])
@@ -59,9 +73,15 @@ def create_organization():
         org = OrganizationService.create_organization(legal_name, trade_name, cnpj, email, phone)
         flash('Organização criada com sucesso.', 'success')
         return redirect(url_for('admin.org_details', org_id=org.id))
-    except Exception as e:
-        flash(f'Erro ao criar organização: {str(e)}', 'error')
-        return redirect(url_for('admin.new_organization'))
+    except OrganizationOperationError as e:
+        current_app.logger.exception('Falha inesperada ao criar organização')
+        flash(str(e), 'error')
+    except OrganizationError as e:
+        flash(str(e), 'error')
+    except Exception:
+        current_app.logger.exception('Falha inesperada e não classificada ao criar organização')
+        flash('Não foi possível criar a organização. Tente novamente.', 'error')
+    return redirect(url_for('admin.new_organization'))
 
 @admin_bp.route('/organizations/<uuid:org_id>', methods=['GET'])
 def org_details(org_id):
@@ -73,13 +93,39 @@ def org_details(org_id):
 
 @admin_bp.route('/organizations/<uuid:org_id>/members', methods=['POST'])
 def add_member(org_id):
-    user_id = request.form.get('user_id')
     role_name = request.form.get('role')
+    try:
+        # user_id vem de campo de formulário (sempre string) - diferente de
+        # org_id, já convertido para uuid.UUID pelo conversor <uuid:...> da
+        # própria URL. Sem esta conversão explícita, uma string (mesmo que
+        # um UUID válido) quebra o bind de parâmetro de qualquer query
+        # filtrada por esta coluna no SQLite (o bind processor do
+        # SQLAlchemy para UUID(as_uuid=True) sempre espera um objeto
+        # `uuid.UUID` já pronto) - nunca afeta o PostgreSQL real, cujo
+        # driver aceita a string diretamente, mas precisa ser tratado aqui
+        # para a rota nunca depender desse comportamento divergente entre
+        # ambientes.
+        user_id = _parse_form_uuid('user_id')
+    except (TypeError, ValueError):
+        flash('Usuário inválido.', 'error')
+        return redirect(url_for('admin.org_details', org_id=org_id))
     try:
         OrganizationService.add_member(org_id, user_id, role_name)
         flash('Membro adicionado com sucesso.', 'success')
-    except Exception as e:
-        flash(f'Erro: {str(e)}', 'error')
+    except OrganizationOperationError as e:
+        current_app.logger.exception(
+            'Falha inesperada ao adicionar membro (org_id=%s, user_id=%s)',
+            org_id, user_id,
+        )
+        flash(str(e), 'error')
+    except OrganizationError as e:
+        flash(str(e), 'error')
+    except Exception:
+        current_app.logger.exception(
+            'Falha inesperada e não classificada ao adicionar membro (org_id=%s, user_id=%s)',
+            org_id, user_id,
+        )
+        flash('Não foi possível adicionar o membro. Tente novamente.', 'error')
     return redirect(url_for('admin.org_details', org_id=org_id))
 
 @admin_bp.route('/organizations/<uuid:org_id>/members/<uuid:user_id>/role', methods=['POST'])
@@ -88,8 +134,20 @@ def change_member_role(org_id, user_id):
     try:
         OrganizationService.change_member_role(org_id, user_id, role_name)
         flash('Papel alterado com sucesso.', 'success')
-    except Exception as e:
-        flash(f'Erro: {str(e)}', 'error')
+    except OrganizationOperationError as e:
+        current_app.logger.exception(
+            'Falha inesperada ao alterar papel do membro (org_id=%s, user_id=%s)',
+            org_id, user_id,
+        )
+        flash(str(e), 'error')
+    except OrganizationError as e:
+        flash(str(e), 'error')
+    except Exception:
+        current_app.logger.exception(
+            'Falha inesperada e não classificada ao alterar papel do membro (org_id=%s, user_id=%s)',
+            org_id, user_id,
+        )
+        flash('Não foi possível alterar o papel do membro. Tente novamente.', 'error')
     return redirect(url_for('admin.org_details', org_id=org_id))
 
 @admin_bp.route('/organizations/<uuid:org_id>/members/<uuid:user_id>/remove', methods=['POST'])
@@ -97,19 +155,51 @@ def remove_member(org_id, user_id):
     try:
         OrganizationService.remove_member(org_id, user_id)
         flash('Membro removido com sucesso.', 'success')
-    except Exception as e:
-        flash(f'Erro ao remover: {str(e)}', 'error')
+    except OrganizationOperationError as e:
+        current_app.logger.exception(
+            'Falha inesperada ao remover membro (org_id=%s, user_id=%s)',
+            org_id, user_id,
+        )
+        flash(str(e), 'error')
+    except OrganizationError as e:
+        flash(str(e), 'error')
+    except Exception:
+        current_app.logger.exception(
+            'Falha inesperada e não classificada ao remover membro (org_id=%s, user_id=%s)',
+            org_id, user_id,
+        )
+        flash('Não foi possível remover o membro. Tente novamente.', 'error')
     return redirect(url_for('admin.org_details', org_id=org_id))
 
 @admin_bp.route('/users/<uuid:user_id>/organization', methods=['POST'])
 def link_user_to_org(user_id):
-    org_id = request.form.get('organization_id')
     role_name = request.form.get('role', 'owner')
+    try:
+        # Mesmo motivo do parse em add_member: organization_id vem de campo
+        # de formulário (string) - diferente de user_id nesta rota
+        # (parâmetro da própria URL, <uuid:user_id>, já convertido pelo
+        # Flask antes desta view rodar).
+        org_id = _parse_form_uuid('organization_id')
+    except (TypeError, ValueError):
+        flash('Organização inválida.', 'error')
+        return redirect(url_for('admin.users_orgs'))
     try:
         OrganizationService.add_member(org_id, user_id, role_name)
         flash('Usuário vinculado com sucesso.', 'success')
-    except Exception as e:
-        flash(f'Erro: {str(e)}', 'error')
+    except OrganizationOperationError as e:
+        current_app.logger.exception(
+            'Falha inesperada ao vincular usuário a organização (org_id=%s, user_id=%s)',
+            org_id, user_id,
+        )
+        flash(str(e), 'error')
+    except OrganizationError as e:
+        flash(str(e), 'error')
+    except Exception:
+        current_app.logger.exception(
+            'Falha inesperada e não classificada ao vincular usuário a organização (org_id=%s, user_id=%s)',
+            org_id, user_id,
+        )
+        flash('Não foi possível vincular o usuário à organização. Tente novamente.', 'error')
     return redirect(url_for('admin.users_orgs'))
 
 
