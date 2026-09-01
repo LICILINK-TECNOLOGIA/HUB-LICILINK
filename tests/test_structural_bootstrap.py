@@ -516,7 +516,7 @@ class TestAccessServiceReflectsCanonicalCatalog:
             BootstrapService.ensure_structural_catalog()
             organization, user = self._create_org_with_member()
 
-            AccessService.grant_product_access(organization.id, "gedo", status="active")
+            AccessService.grant_product_access(organization.id, "gedo", actor_user_id=user.id)
 
             items = AccessService.get_organization_products(user.id, organization.id)
             by_code = {item["product"].code: item for item in items}
@@ -530,10 +530,10 @@ class TestAccessServiceReflectsCanonicalCatalog:
             BootstrapService.ensure_structural_catalog()
             organization, user = self._create_org_with_member()
 
-            org_product = AccessService.grant_product_access(organization.id, "gedo", status="active")
-            original_id = org_product.id
-            original_product_id = org_product.product_id
-            original_status = org_product.status
+            result = AccessService.grant_product_access(organization.id, "gedo", actor_user_id=user.id)
+            original_id = result.organization_product.id
+            original_product_id = result.organization_product.product_id
+            original_status = result.organization_product.status
             organization_id = organization.id
 
             # Uma segunda execução do bootstrap (idempotente) não deve
@@ -551,8 +551,8 @@ class TestAccessServiceReflectsCanonicalCatalog:
             BootstrapService.ensure_structural_catalog()
             organization, user = self._create_org_with_member()
 
-            AccessService.grant_product_access(organization.id, "kalender", status="active")
-            AccessService.grant_product_access(organization.id, "gedo", status="trial")
+            AccessService.grant_product_access(organization.id, "kalender", actor_user_id=user.id)
+            AccessService.grant_product_access(organization.id, "gedo", actor_user_id=user.id)
             BootstrapService.ensure_structural_catalog()
 
             for code in ("kalender", "gedo", "hunt"):
