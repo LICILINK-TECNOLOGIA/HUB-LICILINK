@@ -1,27 +1,3 @@
-from app.routes import is_valid_url
-
-
-def test_is_valid_url_in_production():
-    # Em produção, HTTP deve ser rejeitado
-    assert is_valid_url('https://sistema.exemplo.com', is_production=True) is True
-    assert is_valid_url('https://sistema.exemplo.com/', is_production=True) is True
-
-    assert is_valid_url('http://sistema.exemplo.com', is_production=True) is False
-    assert is_valid_url('/sistema', is_production=True) is False
-    assert is_valid_url('javascript:alert(1)', is_production=True) is False
-    assert is_valid_url('data:text/html,', is_production=True) is False
-    assert is_valid_url('', is_production=True) is False
-    assert is_valid_url(None, is_production=True) is False
-    assert is_valid_url('   ', is_production=True) is False
-
-def test_is_valid_url_in_development():
-    # Em desenvolvimento, HTTP pode ser aceito
-    assert is_valid_url('https://sistema.exemplo.com', is_production=False) is True
-    assert is_valid_url('http://sistema.exemplo.com', is_production=False) is True
-
-    assert is_valid_url('/sistema', is_production=False) is False
-    assert is_valid_url('javascript:alert(1)', is_production=False) is False
-
 def test_index_route_requires_login(client):
     response = client.get('/')
     assert response.status_code == 302

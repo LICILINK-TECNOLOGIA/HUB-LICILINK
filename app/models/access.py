@@ -5,7 +5,11 @@ from ..extensions import db
 class Product(BaseModel):
     __tablename__ = 'products'
 
-    code = db.Column(db.String(50), unique=True, nullable=False) # Ex: 'l-kalender', 'l-gedo', 'l-hunt'
+    # Issue #27: código canônico persistido - sempre sem o prefixo comercial
+    # 'L-' (que pertence somente a Product.name e às variáveis L_*_URL).
+    # Único catálogo válido, definido em STRUCTURAL_PRODUCTS
+    # (app/services/bootstrap_service.py): 'kalender', 'gedo', 'hunt'.
+    code = db.Column(db.String(50), unique=True, nullable=False)
     name = db.Column(db.String(100), nullable=False)
     description = db.Column(db.Text)
     url = db.Column(db.String(255))
