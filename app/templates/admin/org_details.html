@@ -182,6 +182,55 @@
             </tbody>
         </table>
     </div>
+
+    <div class="section-card">
+        <h3 style="color: var(--primary-blue); border-bottom: 1px solid #eee; padding-bottom: 0.5rem;">Produtos</h3>
+
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Produto</th>
+                    <th>Código</th>
+                    <th>Status</th>
+                    <th>Acesso</th>
+                    <th>Ações</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in products %}
+                <tr>
+                    <td>{{ item.product.name }}</td>
+                    <td>{{ item.product.code }}</td>
+                    <td>{{ item.status }}</td>
+                    <td>
+                        {% if item.has_access %}
+                            <span class="role-badge" style="background-color: #E8F5E9; color: #2E7D32;">Com acesso</span>
+                        {% else %}
+                            <span class="role-badge" style="background-color: #FFEBEE; color: #C62828;">Sem acesso</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if item.has_access %}
+                        <form action="{{ url_for('admin.revoke_product', org_id=org.id, product_code=item.product.code) }}" method="POST" style="display: inline-block;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-sm" style="background-color: #FFEBEE; color: #C62828; border: none; cursor: pointer;">Revogar acesso</button>
+                        </form>
+                        {% else %}
+                        <form action="{{ url_for('admin.grant_product', org_id=org.id, product_code=item.product.code) }}" method="POST" style="display: inline-block;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-sm btn-primary">Conceder acesso</button>
+                        </form>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="5" class="text-center">Nenhum produto estrutural disponível ainda.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
 </div>
 
 <!-- Modal Adicionar Membro -->
