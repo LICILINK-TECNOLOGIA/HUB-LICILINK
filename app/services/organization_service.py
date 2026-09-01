@@ -6,6 +6,29 @@ from ..models import Organization, OrganizationMember, Role, User
 from ..models.identity import OrganizationMemberStatus
 from .audit_service import AuditService
 
+
+class OrganizationError(ValueError):
+    """Erro de domínio esperado e seguro (vínculo duplicado, papel
+    inexistente, último owner ativo, administrador interno rejeitado,
+    etc.) - a mensagem já é curada para ser exibida diretamente ao
+    operador, nunca contém detalhe de banco/driver. Continua sendo um
+    `ValueError` (compatibilidade com `pytest.raises(ValueError)` já usado
+    pelos chamadores existentes), mas nunca é a mesma classe usada para uma
+    falha inesperada - ver `OrganizationOperationError`."""
+
+
+class OrganizationOperationError(ValueError):
+    """Falha inesperada ao processar a operação (banco, driver, AuditLog,
+    ou qualquer exceção não prevista) - deliberadamente NÃO é subclasse de
+    `OrganizationError` (são classes irmãs), para que uma rota consiga
+    capturar uma sem capturar a outra. A mensagem pública desta exceção é
+    sempre genérica; a causa técnica real é preservada em `__cause__` via
+    `raise ... from exc`, nunca exposta ao usuário - só para quem
+    inspecionar/logar a exceção no servidor (ver `app/blueprints/admin.py`).
+    Mesmo padrão já estabelecido por `ProductAccessError`/
+    `ProductAccessOperationError` em `app/services/access_service.py`."""
+
+
 class OrganizationService:
     @staticmethod
     def _lock_organization_row(organization_id):
@@ -61,27 +84,48 @@ class OrganizationService:
 
     @staticmethod
     def create_organization(legal_name, trade_name=None, cnpj=None, email=None, phone=None):
+        """Cria a organização e o AuditLog correspondente em UMA ÚNICA
+        transação/commit (Issue #41) - antes, eram dois commits separados
+        (organização, depois AuditLog); se o segundo falhasse, a
+        organização já estava persistida mas a rota exibia erro ao
+        operador (persistência parcial silenciosa). Qualquer falha agora
+        reverte tudo via `db.session.rollback()`, nunca deixando uma
+        organização órfã de AuditLog nem um AuditLog de uma organização
+        que não foi persistida."""
         cleaned_cnpj = OrganizationService._clean_cnpj(cnpj)
 
-        org = Organization(
-            legal_name=legal_name,
-            trade_name=trade_name,
-            cnpj=cleaned_cnpj,
-            email=email,
-            phone=phone
-        )
-        db.session.add(org)
-        db.session.commit()
+        try:
+            org = Organization(
+                legal_name=legal_name,
+                trade_name=trade_name,
+                cnpj=cleaned_cnpj,
+                email=email,
+                phone=phone
+            )
+            db.session.add(org)
+            # flush (não commit): obtém org.id, necessário para o AuditLog
+            # abaixo, sem antecipar a persistência definitiva.
+            db.session.flush()
 
-        # Log audit
-        admin_id = current_user.id if current_user and current_user.is_authenticated else None
-        AuditService.log_action(
-            user_id=admin_id,
-            action='organization.created',
-            resource_type='organization',
-            resource_id=org.id,
-            details={'legal_name': legal_name, 'cnpj': cleaned_cnpj}
-        )
+            admin_id = current_user.id if current_user and current_user.is_authenticated else None
+            AuditService.log_action(
+                user_id=admin_id,
+                action='organization.created',
+                resource_type='organization',
+                resource_id=org.id,
+                details={'legal_name': legal_name, 'cnpj': cleaned_cnpj},
+                commit=False,
+            )
+
+            db.session.commit()
+        except OrganizationError:
+            db.session.rollback()
+            raise
+        except Exception as exc:
+            db.session.rollback()
+            raise OrganizationOperationError(
+                "Não foi possível criar a organização. Nenhuma alteração foi salva."
+            ) from exc
 
         return org
 
@@ -126,56 +170,76 @@ class OrganizationService:
         operação chamadora prossiga. Suspender/remover um vínculo legado
         (saneamento) NÃO passa por aqui - continua sempre permitido."""
         if OrganizationService._user_is_internal_admin(user_id):
-            raise ValueError(
+            raise OrganizationError(
                 "Administradores internos não podem ser vinculados como membros de organizações clientes."
             )
 
     @staticmethod
     def add_member(organization_id, user_id, role_name):
-        OrganizationService._reject_internal_admin_as_member(user_id)
+        """Cria o vínculo e o AuditLog correspondente em UMA ÚNICA
+        transação/commit (Issue #41) - mesmo motivo/mesma correção de
+        `create_organization`: dois commits separados deixavam o vínculo
+        persistido mesmo quando só o AuditLog falhava. Assinatura e
+        retorno (`OrganizationMember`) preservados - usado como helper de
+        setup por dezenas de outros testes."""
+        try:
+            OrganizationService._reject_internal_admin_as_member(user_id)
 
-        # Verifica se já existe um vínculo, em qualquer status. Nunca cria
-        # uma segunda linha (violaria a constraint de unicidade) nem reativa
-        # silenciosamente um vínculo removido/suspenso - isso deve passar
-        # por uma operação administrativa explícita e separada
-        # (restore_removed_member / reactivate_member).
-        existing = OrganizationMember.query.filter_by(organization_id=organization_id, user_id=user_id).first()
-        if existing:
-            if existing.status == OrganizationMemberStatus.REMOVED.value:
-                raise ValueError(
-                    "Este usuário já teve um vínculo removido com esta organização. "
-                    "Use uma restauração administrativa explícita (restore_removed_member) "
-                    "para reativá-lo, em vez de criar um novo vínculo."
-                )
-            raise ValueError("O usuário já é membro desta organização.")
+            # Verifica se já existe um vínculo, em qualquer status. Nunca cria
+            # uma segunda linha (violaria a constraint de unicidade) nem reativa
+            # silenciosamente um vínculo removido/suspenso - isso deve passar
+            # por uma operação administrativa explícita e separada
+            # (restore_removed_member / reactivate_member).
+            existing = OrganizationMember.query.filter_by(organization_id=organization_id, user_id=user_id).first()
+            if existing:
+                if existing.status == OrganizationMemberStatus.REMOVED.value:
+                    raise OrganizationError(
+                        "Este usuário já teve um vínculo removido com esta organização. "
+                        "Use uma restauração administrativa explícita (restore_removed_member) "
+                        "para reativá-lo, em vez de criar um novo vínculo."
+                    )
+                raise OrganizationError("O usuário já é membro desta organização.")
 
-        role = Role.query.filter_by(name=role_name).first()
-        if not role:
-            # Em cenário de setup, criar caso não exista
-            role = Role(name=role_name, description=f'Role {role_name}')
-            db.session.add(role)
+            role = Role.query.filter_by(name=role_name).first()
+            if not role:
+                # Em cenário de setup, criar caso não exista
+                role = Role(name=role_name, description=f'Role {role_name}')
+                db.session.add(role)
+                db.session.flush()
+
+            # Novo vínculo criado por ação administrativa explícita (não há fluxo
+            # de convite/aceite pendente no projeto) - default seguro e
+            # documentado: 'active' (ver OrganizationMemberStatus).
+            member = OrganizationMember(
+                user_id=user_id,
+                organization_id=organization_id,
+                role_id=role.id,
+                status=OrganizationMemberStatus.ACTIVE.value,
+            )
+            db.session.add(member)
+            # flush (não commit): obtém member.id, necessário para o
+            # AuditLog abaixo, sem antecipar a persistência definitiva.
             db.session.flush()
 
-        # Novo vínculo criado por ação administrativa explícita (não há fluxo
-        # de convite/aceite pendente no projeto) - default seguro e
-        # documentado: 'active' (ver OrganizationMemberStatus).
-        member = OrganizationMember(
-            user_id=user_id,
-            organization_id=organization_id,
-            role_id=role.id,
-            status=OrganizationMemberStatus.ACTIVE.value,
-        )
-        db.session.add(member)
-        db.session.commit()
+            admin_id = current_user.id if current_user and current_user.is_authenticated else None
+            AuditService.log_action(
+                user_id=admin_id,
+                action='organization.member.added',
+                resource_type='organization',
+                resource_id=organization_id,
+                details={'user_id': str(user_id), 'role': role_name, 'status': member.status},
+                commit=False,
+            )
 
-        admin_id = current_user.id if current_user and current_user.is_authenticated else None
-        AuditService.log_action(
-            user_id=admin_id,
-            action='organization.member.added',
-            resource_type='organization',
-            resource_id=organization_id,
-            details={'user_id': str(user_id), 'role': role_name, 'status': member.status}
-        )
+            db.session.commit()
+        except OrganizationError:
+            db.session.rollback()
+            raise
+        except Exception as exc:
+            db.session.rollback()
+            raise OrganizationOperationError(
+                "Não foi possível atualizar o vínculo da organização. Nenhuma alteração foi salva."
+            ) from exc
 
         return member
 
@@ -197,11 +261,11 @@ class OrganizationService:
 
             member = OrganizationMember.query.filter_by(organization_id=organization_id, user_id=user_id).first()
             if not member:
-                raise ValueError("O usuário não pertence a esta organização.")
+                raise OrganizationError("O usuário não pertence a esta organização.")
 
             new_role = Role.query.filter_by(name=new_role_name).first()
             if not new_role:
-                raise ValueError("O papel especificado não existe.")
+                raise OrganizationError("O papel especificado não existe.")
 
             # Validação: Impedir remoção do último OWNER ATIVO se o novo papel não for OWNER
             current_role = member.role
@@ -212,7 +276,7 @@ class OrganizationService:
                     Role.name == 'owner'
                 ).count()
                 if owner_count <= 1:
-                    raise ValueError("A organização precisa possuir ao menos um proprietário (OWNER) ativo. Atribua outro proprietário antes de alterar o papel deste usuário.")
+                    raise OrganizationError("A organização precisa possuir ao menos um proprietário (OWNER) ativo. Atribua outro proprietário antes de alterar o papel deste usuário.")
 
             member.role_id = new_role.id
 
@@ -227,12 +291,14 @@ class OrganizationService:
             )
 
             db.session.commit()
-        except ValueError:
+        except OrganizationError:
             db.session.rollback()
             raise
-        except Exception:
+        except Exception as exc:
             db.session.rollback()
-            raise ValueError("Erro ao alterar o papel do membro. Nenhuma alteração foi salva.")
+            raise OrganizationOperationError(
+                "Erro ao alterar o papel do membro. Nenhuma alteração foi salva."
+            ) from exc
 
         return member
 
@@ -292,7 +358,7 @@ class OrganizationService:
                         Role.name == 'owner'
                     ).count()
                     if owner_count <= 1:
-                        raise ValueError(
+                        raise OrganizationError(
                             "A organização precisa possuir ao menos um proprietário (OWNER) ativo. "
                             "Atribua outro proprietário antes de alterar o status deste usuário."
                         )
@@ -316,12 +382,14 @@ class OrganizationService:
             )
 
             db.session.commit()
-        except ValueError:
+        except OrganizationError:
             db.session.rollback()
             raise
-        except Exception:
+        except Exception as exc:
             db.session.rollback()
-            raise ValueError("Erro ao alterar o status do vínculo. Nenhuma alteração foi salva.")
+            raise OrganizationOperationError(
+                "Erro ao alterar o status do vínculo. Nenhuma alteração foi salva."
+            ) from exc
 
         return member
 
@@ -339,20 +407,20 @@ class OrganizationService:
         revertido por `restore_removed_member`, nunca por aqui."""
         valid_statuses = {status.value for status in OrganizationMemberStatus}
         if new_status not in valid_statuses:
-            raise ValueError(
+            raise OrganizationError(
                 f"Status inválido: deve ser um destes valores: {', '.join(sorted(valid_statuses))}."
             )
 
         member = OrganizationMember.query.filter_by(organization_id=organization_id, user_id=user_id).first()
         if not member:
-            raise ValueError("O usuário não pertence a esta organização.")
+            raise OrganizationError("O usuário não pertence a esta organização.")
 
         if new_status == member.status:
-            raise ValueError("O vínculo já está neste status.")
+            raise OrganizationError("O vínculo já está neste status.")
 
         allowed_targets = OrganizationService._ALLOWED_STATUS_TRANSITIONS.get(member.status, set())
         if new_status not in allowed_targets:
-            raise ValueError(
+            raise OrganizationError(
                 f"Transição de status inválida: '{member.status}' -> '{new_status}'."
             )
 
@@ -409,10 +477,10 @@ class OrganizationService:
         """
         member = OrganizationMember.query.filter_by(organization_id=organization_id, user_id=user_id).first()
         if not member:
-            raise ValueError("O usuário não pertence a esta organização.")
+            raise OrganizationError("O usuário não pertence a esta organização.")
 
         if member.status != OrganizationMemberStatus.REMOVED.value:
-            raise ValueError("Esta operação só é permitida para vínculos removidos.")
+            raise OrganizationError("Esta operação só é permitida para vínculos removidos.")
 
         return OrganizationService._apply_status_transition(
             organization_id, user_id, member,
