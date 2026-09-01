@@ -2,11 +2,23 @@ from html.parser import HTMLParser
 
 import pytest
 from sqlalchemy.ext.compiler import compiles
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 @compiles(JSONB, 'sqlite')
 def compile_jsonb_sqlite(type_, compiler, **kw):
     return 'JSON'
+
+# Issue #39: sem este override, o SQLite compila `UUID` (mesma classe usada
+# pelos models) como o tipo bruto "UUID", sem substring de afinidade TEXT
+# reconhecida (INT/CHAR/CLOB/TEXT/BLOB/REAL/FLOA/DOUB) - a coluna recebe
+# afinidade NUMERIC, e um `.hex` só-dígitos é coagido para INTEGER/REAL ao
+# gravar, quebrando a reconstrução do `uuid.UUID` na releitura (reproduzido
+# deterministicamente na investigação da Issue #39). `CHAR(32)` força
+# afinidade TEXT, preservando a string como gravada; afeta somente o SQLite
+# dos testes, nunca o PostgreSQL real.
+@compiles(UUID, 'sqlite')
+def compile_uuid_sqlite(type_, compiler, **kw):
+    return 'CHAR(32)'
 
 from app import create_app
 
