@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Solicitação inválida - LiciLink HUB</title>
+    <style>
+        :root {
+            --primary-blue: #1565C0;
+            --accent-orange: #F4511E;
+            --white: #FFFFFF;
+            --bg-light: #FAFAFA;
+            --text-dark: #303030;
+            --text-muted: #757575;
+            --radius-lg: 12px;
+            --shadow-lg: 0 10px 20px rgba(0,0,0,0.15);
+        }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Inter', Arial, sans-serif;
+        }
+        body {
+            background-color: var(--bg-light);
+            color: var(--text-dark);
+            line-height: 1.6;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1.5rem;
+        }
+        .error-container {
+            width: 100%;
+            max-width: 400px;
+            background-color: var(--white);
+            padding: 2.5rem;
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-lg);
+            text-align: center;
+        }
+        .error-title {
+            color: var(--primary-blue);
+            margin-bottom: 1.5rem;
+        }
+        .error-subtitle {
+            color: var(--text-dark);
+            margin-bottom: 1rem;
+        }
+        .error-footer {
+            margin-top: 1.5rem;
+            font-size: 0.9rem;
+            color: var(--text-muted);
+        }
+        .error-footer a {
+            color: var(--accent-orange);
+            text-decoration: none;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <div class="error-container">
+        <h2 class="error-title">Solicitação inválida</h2>
+        <p class="error-subtitle">
+            Não foi possível validar esta solicitação. Isso pode acontecer
+            quando a página fica aberta por muito tempo ou quando o
+            formulário é reenviado de forma inesperada.
+        </p>
+        <p class="error-subtitle">
+            Volte e tente novamente.
+        </p>
+        <div class="error-footer">
+            <a href="{{ url_for('dashboard.index') }}">Página inicial</a>
+            &nbsp;|&nbsp;
+            <a href="{{ url_for('auth.login') }}">Entrar</a>
+        </div>
+    </div>
+</body>
+</html>

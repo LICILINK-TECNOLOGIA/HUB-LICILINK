@@ -2,6 +2,7 @@ import os
 from flask import Blueprint, jsonify, request
 from functools import wraps
 from ..services.lead_service import LeadService
+from ..extensions import csrf
 
 api_bp = Blueprint('api', __name__)
 
@@ -22,6 +23,7 @@ def require_api_key(f):
     return decorated_function
 
 @api_bp.route('/leads', methods=['POST'])
+@csrf.exempt  # Autenticado por Authorization: Bearer HUB_API_KEY, não por cookie de sessão - CSRF não se aplica.
 @require_api_key
 def create_lead():
     data = request.json

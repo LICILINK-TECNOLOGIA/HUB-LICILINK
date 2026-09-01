@@ -202,7 +202,7 @@ class TestCookieAttributesPerConfigClass:
 
 
 class TestSetCookieHeaderRealResponse:
-    def test_set_cookie_header_has_httponly_and_samesite(self, client):
+    def test_set_cookie_header_has_httponly_and_samesite(self, client, get_csrf_token):
         # Usa a rota /login já existente (sem alterá-la) com credenciais
         # sintéticas inválidas: isso é suficiente para o Flask gravar a
         # mensagem de flash na sessão e emitir um Set-Cookie real.
@@ -211,6 +211,7 @@ class TestSetCookieHeaderRealResponse:
             data={
                 "email": "usuario.sintetico.inexistente@example.com",
                 "password": "senha-sintetica-de-teste",
+                "csrf_token": get_csrf_token(client),
             },
         )
         set_cookie_headers = response.headers.getlist("Set-Cookie")

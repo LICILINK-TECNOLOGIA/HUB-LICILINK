@@ -888,7 +888,7 @@ class TestAuditLogFailureAtomicity:
 
 
 class TestDashboardRouteDoesNotLeakValueError:
-    def test_authenticated_user_with_active_membership_gets_200_not_500(self, client, app):
+    def test_authenticated_user_with_active_membership_gets_200_not_500(self, client, app, get_csrf_token):
         with app.app_context():
             org = Organization(legal_name='Organizacao Dashboard Teste')
             db.session.add(org)
@@ -921,6 +921,7 @@ class TestDashboardRouteDoesNotLeakValueError:
         login_response = client.post('/login', data={
             'email': 'usuario.dashboard.500@example.com',
             'password': 'senha-sintetica-dashboard-123',
+            'csrf_token': get_csrf_token(client),
         })
         assert login_response.status_code == 302
 
@@ -968,14 +969,18 @@ class TestDashboardDisplaysOrganizationLegalName:
         OrganizationService.add_member(org.id, user.id, 'member')
         return org, user, product
 
-    def _login(self, client, email):
-        return client.post('/login', data={'email': email, 'password': self.SYNTHETIC_PASSWORD})
+    def _login(self, client, email, get_csrf_token):
+        return client.post('/login', data={
+            'email': email,
+            'password': self.SYNTHETIC_PASSWORD,
+            'csrf_token': get_csrf_token(client),
+        })
 
-    def test_active_member_gets_200_and_legal_name_rendered_non_empty(self, client, app):
+    def test_active_member_gets_200_and_legal_name_rendered_non_empty(self, client, app, get_csrf_token):
         with app.app_context():
             self._create_linked_user('Organizacao Issue 32 LTDA', 'usuario.issue32.basico@example.com')
 
-        self._login(client, 'usuario.issue32.basico@example.com')
+        self._login(client, 'usuario.issue32.basico@example.com', get_csrf_token)
         response = client.get('/')
 
         assert response.status_code == 200
@@ -986,22 +991,22 @@ class TestDashboardDisplaysOrganizationLegalName:
         # vazio.
         assert '<strong></strong>' not in html
 
-    def test_accented_legal_name_is_displayed_correctly(self, client, app):
+    def test_accented_legal_name_is_displayed_correctly(self, client, app, get_csrf_token):
         with app.app_context():
             self._create_linked_user('Organização São João Ltda', 'usuario.issue32.acentos@example.com')
 
-        self._login(client, 'usuario.issue32.acentos@example.com')
+        self._login(client, 'usuario.issue32.acentos@example.com', get_csrf_token)
         response = client.get('/')
 
         html = response.data.decode('utf-8')
         assert 'Organização São João Ltda' in html
 
-    def test_html_characters_in_legal_name_are_escaped_not_interpreted(self, client, app):
+    def test_html_characters_in_legal_name_are_escaped_not_interpreted(self, client, app, get_csrf_token):
         dangerous_name = 'Nome <script>alert(1)</script> & "Cia"'
         with app.app_context():
             self._create_linked_user(dangerous_name, 'usuario.issue32.escaping@example.com')
 
-        self._login(client, 'usuario.issue32.escaping@example.com')
+        self._login(client, 'usuario.issue32.escaping@example.com', get_csrf_token)
         response = client.get('/')
 
         html = response.data.decode('utf-8')
@@ -1009,7 +1014,7 @@ class TestDashboardDisplaysOrganizationLegalName:
         assert '&lt;script&gt;alert(1)&lt;/script&gt;' in html
         assert '&amp;' in html
 
-    def test_unlinked_user_does_not_see_any_organization(self, client, app):
+    def test_unlinked_user_does_not_see_any_organization(self, client, app, get_csrf_token):
         with app.app_context():
             org = Organization(legal_name='Organizacao Sem Vinculo Issue 32')
             db.session.add(org)
@@ -1024,7 +1029,7 @@ class TestDashboardDisplaysOrganizationLegalName:
             db.session.add(user)
             db.session.commit()
 
-        self._login(client, 'usuario.issue32.semvinculo@example.com')
+        self._login(client, 'usuario.issue32.semvinculo@example.com', get_csrf_token)
         response = client.get('/')
 
         assert response.status_code == 200
@@ -1032,7 +1037,7 @@ class TestDashboardDisplaysOrganizationLegalName:
         assert 'Organizacao Sem Vinculo Issue 32' not in html
         assert 'Aguardando vincula' in html
 
-    def test_internal_admin_without_membership_does_not_receive_client_organization(self, client, app):
+    def test_internal_admin_without_membership_does_not_receive_client_organization(self, client, app, get_csrf_token):
         with app.app_context():
             org = Organization(legal_name='Organizacao Cliente Issue 32 Admin')
             db.session.add(org)
@@ -1047,7 +1052,7 @@ class TestDashboardDisplaysOrganizationLegalName:
             db.session.add(internal_admin)
             db.session.commit()
 
-        self._login(client, 'admin.interno.issue32@example.com')
+        self._login(client, 'admin.interno.issue32@example.com', get_csrf_token)
         response = client.get('/')
 
         assert response.status_code == 200
@@ -1065,11 +1070,11 @@ class TestDashboardDisplaysOrganizationLegalName:
             db.session.commit()
             assert not hasattr(org, 'name')
 
-    def test_permissions_and_product_listing_remain_unaffected(self, client, app):
+    def test_permissions_and_product_listing_remain_unaffected(self, client, app, get_csrf_token):
         with app.app_context():
             self._create_linked_user('Organizacao Produtos Issue 32', 'usuario.issue32.produtos@example.com')
 
-        self._login(client, 'usuario.issue32.produtos@example.com')
+        self._login(client, 'usuario.issue32.produtos@example.com', get_csrf_token)
         response = client.get('/')
 
         assert response.status_code == 200
