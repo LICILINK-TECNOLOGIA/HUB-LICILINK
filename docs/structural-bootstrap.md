@@ -15,6 +15,26 @@ ou `AccessService.grant_product_access`). Também é seguro executá-lo a
 qualquer momento depois - inclusive em produção, sobre um banco já em uso -
 sem risco de duplicar ou corromper dados, porque é **idempotente**.
 
+## Códigos canônicos dos produtos (Issue #27)
+
+`Product.code` persistido é sempre `kalender`, `gedo` ou `hunt` - sem o
+prefixo `L-`. O prefixo `L-` pertence exclusivamente ao nome comercial
+(`Product.name`, ex.: "L-Kalender") e às variáveis de configuração
+(`L_KALENDER_URL`, `L_GEDO_URL`, `L_HUNT_URL`), nunca ao código persistido.
+`STRUCTURAL_PRODUCTS` (`app/services/bootstrap_service.py`) é a **única**
+fonte canônica desses três códigos - `AccessService` e o dashboard nunca
+redeclaram uma lista própria, apenas leem os registros já existentes no
+banco. `hunt` é um produto estrutural igual aos demais, sem nenhum
+tratamento especial. Não existem aliases (`l-kalender`, `l-gedo`,
+`l-hunt`) neste catálogo: não há, no código atual, nenhum caminho que
+persista produtos com essa grafia, e nenhuma ocorrência funcional dela foi
+encontrada neste repositório - portanto nenhuma migration ou alias é
+necessário com base no código e nos testes auditados (Issue #27; bancos
+PostgreSQL e ambientes externos não foram auditados nesta Issue). Se um
+ambiente externo tiver dados criados fora dos caminhos deste repositório
+(por exemplo, por inserção manual), isso deve ser auditado separadamente
+antes de qualquer correção de dados.
+
 ## O que ele cria - e o que ele NÃO cria
 
 Cria **apenas** os dois catálogos estruturais:

@@ -1,3 +1,5 @@
+from datetime import datetime
+
 import pytest
 
 from app.extensions import db
@@ -11,12 +13,14 @@ from app.models import (
     ProductPermission,
     OrganizationProduct,
 )
+from app.services.access_service import AccessService
 from app.services.bootstrap_service import (
     BootstrapService,
     StructuralCatalogConflictError,
     STRUCTURAL_ROLES,
     STRUCTURAL_PRODUCTS,
 )
+from app.services.organization_service import OrganizationService
 
 
 @pytest.fixture
@@ -401,3 +405,155 @@ class TestCliCommand:
         with app.app_context():
             assert Role.query.count() == 2
             assert Product.query.count() == 3
+
+
+class TestCanonicalProductCatalogShape:
+    """Issue #27: STRUCTURAL_PRODUCTS é a única fonte canônica dos códigos
+    de produto persistidos - 'kalender', 'gedo', 'hunt', sempre sem o
+    prefixo comercial 'L-' (que pertence só a Product.name e às variáveis
+    L_*_URL). Estes testes validam o formato do catálogo em si, sem
+    depender de banco/bootstrap."""
+
+    def test_canonical_codes_are_exactly_kalender_gedo_hunt(self):
+        codes = {spec["code"] for spec in STRUCTURAL_PRODUCTS}
+        assert codes == {"kalender", "gedo", "hunt"}
+
+    def test_canonical_codes_are_unique(self):
+        codes = [spec["code"] for spec in STRUCTURAL_PRODUCTS]
+        assert len(codes) == len(set(codes))
+
+    def test_no_canonical_code_uses_l_prefix(self):
+        for spec in STRUCTURAL_PRODUCTS:
+            assert not spec["code"].startswith("l-")
+
+    def test_every_product_spec_has_the_required_fields(self):
+        required_keys = {"code", "name", "description", "url_config_key"}
+        for spec in STRUCTURAL_PRODUCTS:
+            assert required_keys.issubset(spec.keys())
+
+    def test_url_config_key_matches_expected_environment_variable_per_product(self):
+        expected = {
+            "kalender": "L_KALENDER_URL",
+            "gedo": "L_GEDO_URL",
+            "hunt": "L_HUNT_URL",
+        }
+        for spec in STRUCTURAL_PRODUCTS:
+            assert spec["url_config_key"] == expected[spec["code"]]
+
+
+class TestAccessServiceReflectsCanonicalCatalog:
+    """Issue #27: AccessService/dashboard nunca redeclaram uma lista própria
+    de produtos - leem diretamente os registros que o bootstrap já criou a
+    partir de STRUCTURAL_PRODUCTS. Estes testes provam que os três produtos
+    estruturais (incluindo hunt) chegam corretamente ao Launcher, com URL
+    vinda da configuração, e que uma concessão para um produto nunca afeta
+    os demais nem duplica registros."""
+
+    SYNTHETIC_PASSWORD = "senha-sintetica-issue-27-123"
+
+    def _create_org_with_member(self):
+        organization = Organization(legal_name="Organizacao Catalogo Issue 27")
+        db.session.add(organization)
+        db.session.flush()
+
+        user = User(
+            name="Usuario Catalogo Issue 27",
+            email="usuario.catalogo.issue27@example.com",
+            email_verified_at=datetime.utcnow(),
+        )
+        user.set_password(self.SYNTHETIC_PASSWORD)
+        db.session.add(user)
+        db.session.commit()
+
+        OrganizationService.add_member(organization.id, user.id, "member")
+        return organization, user
+
+    def test_access_service_returns_exactly_the_three_canonical_products(self, app):
+        with app.app_context():
+            BootstrapService.ensure_structural_catalog()
+            organization, user = self._create_org_with_member()
+
+            items = AccessService.get_organization_products(user.id, organization.id)
+
+            codes = {item["product"].code for item in items}
+            assert codes == {"kalender", "gedo", "hunt"}
+
+    def test_hunt_appears_in_access_service_listing(self, app):
+        with app.app_context():
+            BootstrapService.ensure_structural_catalog()
+            organization, user = self._create_org_with_member()
+
+            items = AccessService.get_organization_products(user.id, organization.id)
+
+            hunt_items = [item for item in items if item["product"].code == "hunt"]
+            assert len(hunt_items) == 1
+
+    def test_product_urls_in_access_service_come_from_configuration(self, app):
+        with app.app_context():
+            BootstrapService.ensure_structural_catalog()
+            organization, user = self._create_org_with_member()
+
+            items = AccessService.get_organization_products(user.id, organization.id)
+
+            for item in items:
+                spec = next(s for s in STRUCTURAL_PRODUCTS if s["code"] == item["product"].code)
+                assert item["product"].url == _canonical_url(app, spec)
+
+    def test_organization_without_grants_receives_all_three_as_unsubscribed(self, app):
+        with app.app_context():
+            BootstrapService.ensure_structural_catalog()
+            organization, user = self._create_org_with_member()
+
+            items = AccessService.get_organization_products(user.id, organization.id)
+
+            assert len(items) == 3
+            for item in items:
+                assert item["status"] == "unsubscribed"
+                assert item["has_access"] is False
+
+    def test_grant_to_gedo_does_not_grant_kalender_or_hunt(self, app):
+        with app.app_context():
+            BootstrapService.ensure_structural_catalog()
+            organization, user = self._create_org_with_member()
+
+            AccessService.grant_product_access(organization.id, "gedo", status="active")
+
+            items = AccessService.get_organization_products(user.id, organization.id)
+            by_code = {item["product"].code: item for item in items}
+
+            assert by_code["gedo"]["has_access"] is True
+            assert by_code["kalender"]["has_access"] is False
+            assert by_code["hunt"]["has_access"] is False
+
+    def test_existing_organization_product_keeps_same_id_and_status_after_repeated_bootstrap(self, app):
+        with app.app_context():
+            BootstrapService.ensure_structural_catalog()
+            organization, user = self._create_org_with_member()
+
+            org_product = AccessService.grant_product_access(organization.id, "gedo", status="active")
+            original_id = org_product.id
+            original_product_id = org_product.product_id
+            original_status = org_product.status
+            organization_id = organization.id
+
+            # Uma segunda execução do bootstrap (idempotente) não deve
+            # tocar em nenhuma concessão já existente.
+            BootstrapService.ensure_structural_catalog()
+
+            db.session.remove()
+            reloaded = OrganizationProduct.query.filter_by(organization_id=organization_id).first()
+            assert reloaded.id == original_id
+            assert reloaded.product_id == original_product_id
+            assert reloaded.status == original_status
+
+    def test_no_duplicate_products_after_bootstrap_and_grant_cycle(self, app):
+        with app.app_context():
+            BootstrapService.ensure_structural_catalog()
+            organization, user = self._create_org_with_member()
+
+            AccessService.grant_product_access(organization.id, "kalender", status="active")
+            AccessService.grant_product_access(organization.id, "gedo", status="trial")
+            BootstrapService.ensure_structural_catalog()
+
+            for code in ("kalender", "gedo", "hunt"):
+                assert Product.query.filter_by(code=code).count() == 1
