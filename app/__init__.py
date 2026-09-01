@@ -20,17 +20,22 @@ def create_app(config_name=None):
     # Import Models so Alembic can detect them
     from . import models
     
-    from .extensions import db, migrate, login_manager, limiter
-    
+    from .extensions import db, migrate, login_manager, limiter, csrf
+
     # Initialize Extensions
     db.init_app(app)
     migrate.init_app(app, db)
     login_manager.init_app(app)
     limiter.init_app(app)
-    
+    csrf.init_app(app)
+
     # Initialize CLI commands
     from .cli import init_cli
     init_cli(app)
+
+    # Initialize error handlers (ex.: CSRFError)
+    from .errors import register_error_handlers
+    register_error_handlers(app)
     
     login_manager.login_view = 'auth.login'
     login_manager.login_message = "Por favor, faça login para acessar esta página."

@@ -96,6 +96,7 @@
 <div class="auth-container">
     <h2 class="auth-title">Crie sua Conta LiciLink</h2>
     <form method="POST" action="{{ url_for('auth.register') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <div class="form-group">
             <label class="form-label" for="name">Nome Completo</label>
             <input type="text" id="name" name="name" class="form-control" required autofocus>

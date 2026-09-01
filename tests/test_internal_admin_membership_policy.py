@@ -138,10 +138,14 @@ class TestForgedPostIsRejectedEvenIgnoringTemplate:
     (excluído apenas visualmente em org_details.html), também é
     rejeitado."""
 
-    def _login(self, client, email):
-        return client.post("/login", data={"email": email, "password": SYNTHETIC_PASSWORD})
+    def _login(self, client, email, get_csrf_token):
+        return client.post("/login", data={
+            "email": email,
+            "password": SYNTHETIC_PASSWORD,
+            "csrf_token": get_csrf_token(client),
+        })
 
-    def test_forged_add_member_post_is_rejected(self, client, app):
+    def test_forged_add_member_post_is_rejected(self, client, app, get_csrf_token):
         with app.app_context():
             owner_role = Role(name="owner", description="Role owner")
             db.session.add(owner_role)
@@ -173,21 +177,28 @@ class TestForgedPostIsRejectedEvenIgnoringTemplate:
             org_id = org.id
             target_admin_id = target_admin.id
 
-        self._login(client, "operador.interno.forjado@example.com")
+        self._login(client, "operador.interno.forjado@example.com", get_csrf_token)
 
         # POST direto para a rota, com o user_id de um administrador
         # interno - exatamente o que o template nunca ofereceria como
         # opção, simulando um POST forjado que ignore a UI por completo.
+        # Usa um token CSRF válido da própria sessão do operador (um
+        # atacante autenticado também teria um): o que este teste prova é
+        # que a REJEIÇÃO é da política de negócio, não da ausência de CSRF.
         response = client.post(
             f"/admin/organizations/{org_id}/members",
-            data={"user_id": str(target_admin_id), "role": "owner"},
+            data={
+                "user_id": str(target_admin_id),
+                "role": "owner",
+                "csrf_token": get_csrf_token(client, f"/admin/organizations/{org_id}"),
+            },
         )
 
         assert response.status_code in (302, 303)
         with app.app_context():
             assert OrganizationMember.query.filter_by(user_id=target_admin_id).count() == 0
 
-    def test_forged_link_user_to_org_post_is_rejected(self, client, app):
+    def test_forged_link_user_to_org_post_is_rejected(self, client, app, get_csrf_token):
         with app.app_context():
             owner_role = Role(name="owner", description="Role owner")
             db.session.add(owner_role)
@@ -219,11 +230,15 @@ class TestForgedPostIsRejectedEvenIgnoringTemplate:
             target_admin_id = target_admin.id
             org_id = org.id
 
-        self._login(client, "operador.interno.link@example.com")
+        self._login(client, "operador.interno.link@example.com", get_csrf_token)
 
         response = client.post(
             f"/admin/users/{target_admin_id}/organization",
-            data={"organization_id": str(org_id), "role": "owner"},
+            data={
+                "organization_id": str(org_id),
+                "role": "owner",
+                "csrf_token": get_csrf_token(client, "/admin/users-orgs"),
+            },
         )
 
         assert response.status_code in (302, 303)
@@ -232,7 +247,7 @@ class TestForgedPostIsRejectedEvenIgnoringTemplate:
 
 
 class TestTemplateStillOmitsInternalAdminsVisually:
-    def test_internal_admin_does_not_appear_in_org_details_page(self, client, app):
+    def test_internal_admin_does_not_appear_in_org_details_page(self, client, app, get_csrf_token):
         with app.app_context():
             org = Organization(legal_name="Organizacao Template Teste")
             db.session.add(org)
@@ -258,7 +273,11 @@ class TestTemplateStillOmitsInternalAdminsVisually:
             db.session.commit()
             org_id = org.id
 
-        client.post("/login", data={"email": "operador.template@example.com", "password": SYNTHETIC_PASSWORD})
+        client.post("/login", data={
+            "email": "operador.template@example.com",
+            "password": SYNTHETIC_PASSWORD,
+            "csrf_token": get_csrf_token(client),
+        })
 
         response = client.get(f"/admin/organizations/{org_id}")
 
@@ -503,7 +522,7 @@ class TestAccessServiceDeniesLegacyInternalAdminMembership:
 
 
 class TestInternalAdminRoutesRemainUnaffected:
-    def test_internal_admin_can_still_access_admin_dashboard(self, client, app):
+    def test_internal_admin_can_still_access_admin_dashboard(self, client, app, get_csrf_token):
         with app.app_context():
             operator = User(
                 name="Operador Dashboard",
@@ -517,7 +536,11 @@ class TestInternalAdminRoutesRemainUnaffected:
 
         login_response = client.post(
             "/login",
-            data={"email": "operador.dashboard.politica@example.com", "password": SYNTHETIC_PASSWORD},
+            data={
+                "email": "operador.dashboard.politica@example.com",
+                "password": SYNTHETIC_PASSWORD,
+                "csrf_token": get_csrf_token(client),
+            },
         )
         assert login_response.status_code in (302, 303)
 
@@ -569,7 +592,7 @@ class TestDashboardRouteWithLegacyInternalAdminMembership:
     AccessService.get_organization_products - caso contrário, essa segunda
     chamada levantaria ValueError sem tratamento na rota."""
 
-    def test_dashboard_responds_200_without_showing_legacy_org_or_products(self, client, app):
+    def test_dashboard_responds_200_without_showing_legacy_org_or_products(self, client, app, get_csrf_token):
         with app.app_context():
             org = Organization(legal_name="Organizacao Legada Dashboard")
             db.session.add(org)
@@ -609,7 +632,11 @@ class TestDashboardRouteWithLegacyInternalAdminMembership:
 
         client.post(
             "/login",
-            data={"email": "admin.interno.dashboard.legado@example.com", "password": SYNTHETIC_PASSWORD},
+            data={
+                "email": "admin.interno.dashboard.legado@example.com",
+                "password": SYNTHETIC_PASSWORD,
+                "csrf_token": get_csrf_token(client),
+            },
         )
 
         response = client.get("/")

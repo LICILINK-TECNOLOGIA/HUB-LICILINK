@@ -74,6 +74,7 @@
     </p>
 
     <form method="POST" action="{{ url_for('auth.verify') }}" id="verify-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <!-- Input real que enviará o código -->
         <input type="hidden" name="code" id="code-hidden">
         
@@ -92,6 +93,7 @@
     <div class="auth-footer">
         Não recebeu o código? 
         <form method="POST" action="{{ url_for('auth.resend_code') }}" style="display: inline;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit">Reenviar código</button>
         </form>
     </div>

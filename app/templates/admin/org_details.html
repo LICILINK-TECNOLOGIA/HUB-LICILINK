@@ -160,6 +160,7 @@
                     </td>
                     <td>
                         <form action="{{ url_for('admin.change_member_role', org_id=org.id, user_id=member.user_id) }}" method="POST" style="display: inline-block;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <select name="role" onchange="this.form.submit()" style="padding: 2px; border-radius: 4px;">
                                 {% for r in roles %}
                                 <option value="{{ r.name }}" {% if r.id == member.role_id %}selected{% endif %}>{{ r.name|upper }}</option>
@@ -168,6 +169,7 @@
                         </form>
                         
                         <form action="{{ url_for('admin.remove_member', org_id=org.id, user_id=member.user_id) }}" method="POST" style="display: inline-block; margin-left: 10px;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <button type="submit" class="btn btn-sm" style="background-color: #FFEBEE; color: #C62828; border: none; cursor: pointer;" onclick="return confirm('Remover membro?')">Remover</button>
                         </form>
                     </td>
@@ -187,6 +189,7 @@
     <div class="modal-content">
         <h3 style="margin-bottom: 1rem; color: var(--primary-blue);">Adicionar Membro</h3>
         <form action="{{ url_for('admin.add_member', org_id=org.id) }}" method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="form-group">
                 <label class="form-label">Usuário</label>
                 <select name="user_id" class="form-control" required>

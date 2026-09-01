@@ -4,13 +4,14 @@ from app.models import User, PendingEmailVerification
 from app.extensions import db
 
 @patch('app.services.auth_service.EmailService.send_verification_email')
-def test_registration_flow_with_mocked_email(mock_send, client, app):
+def test_registration_flow_with_mocked_email(mock_send, client, app, get_csrf_token):
     # 1. Start Registration
     response = client.post('/register', data={
         'name': 'Integration Test 2',
         'email': 'test_integration2@licilink.com.br',
         'password': 'Password123!',
-        'password_confirm': 'Password123!'
+        'password_confirm': 'Password123!',
+        'csrf_token': get_csrf_token(client, '/register'),
     })
     
     # The route returns 200 with HTML since it flashes a message, or 302
@@ -28,7 +29,8 @@ def test_registration_flow_with_mocked_email(mock_send, client, app):
     assert pending is not None
     
     response = client.post(f'/verify', data={
-        'code': code
+        'code': code,
+        'csrf_token': get_csrf_token(client, '/verify'),
     })
     
     assert response.status_code in (200, 302)
@@ -39,15 +41,16 @@ def test_registration_flow_with_mocked_email(mock_send, client, app):
     assert user.email_verified_at is not None
 
 @patch('app.services.auth_service.EmailService.send_verification_email')
-def test_registration_flow_email_failure(mock_send, client, app):
+def test_registration_flow_email_failure(mock_send, client, app, get_csrf_token):
     mock_send.side_effect = RuntimeError("Email delivery failed: API Error")
-    
+
     # Start Registration
     response = client.post('/register', data={
         'name': 'Integration Test 3',
         'email': 'test_integration3@licilink.com.br',
         'password': 'Password123!',
-        'password_confirm': 'Password123!'
+        'password_confirm': 'Password123!',
+        'csrf_token': get_csrf_token(client, '/register'),
     })
     
     # Pending should still exist so user can try to resend

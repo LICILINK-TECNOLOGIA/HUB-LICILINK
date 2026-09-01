@@ -252,7 +252,10 @@
                     <a href="{{ url_for('admin.dashboard') }}" class="nav-link" style="color: var(--accent-orange);">Admin LiciLink</a>
                 {% endif %}
                 <span class="nav-link">Olá, {{ current_user.name }}</span>
-                <a href="{{ url_for('auth.logout') }}" class="btn btn-outline" style="padding: 0.4rem 1rem; font-size: 0.9rem;">Sair</a>
+                <form method="POST" action="{{ url_for('auth.logout') }}" style="display: inline-flex;">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-outline" style="padding: 0.4rem 1rem; font-size: 0.9rem;">Sair</button>
+                </form>
             {% else %}
                 <a href="{{ url_for('auth.login') }}" class="nav-link">Entrar</a>
                 <a href="{{ url_for('auth.register') }}" class="btn btn-outline" style="padding: 0.4rem 1rem; font-size: 0.9rem;">Criar Conta</a>

@@ -152,6 +152,7 @@
                 <td>
                     {% if not u.is_internal_admin %}
                         <form action="{{ url_for('admin.link_user_to_org', user_id=u.id) }}" method="POST" style="display: flex; gap: 0.5rem; align-items: center;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <select name="organization_id" required style="padding: 4px; font-size: 0.8rem; border-radius: 4px;">
                                 <option value="">Vincular a...</option>
                                 {% for org in orgs %}

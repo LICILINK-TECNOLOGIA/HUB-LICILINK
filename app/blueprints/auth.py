@@ -83,7 +83,7 @@ def resend_code():
         
     return redirect(url_for('auth.verify'))
 
-@auth_bp.route('/logout')
+@auth_bp.route('/logout', methods=['POST'])
 @login_required
 def logout():
     logout_user()
