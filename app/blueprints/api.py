@@ -1,3 +1,4 @@
+import hmac
 import os
 from flask import Blueprint, jsonify, request
 from functools import wraps
@@ -15,8 +16,19 @@ def require_api_key(f):
             
         token = auth_header.split(' ')[1]
         expected_key = os.getenv('HUB_API_KEY')
-        
-        if token != expected_key:
+
+        # Comparação de tempo constante (Issue #43, CWE-208): HUB_API_KEY
+        # ausente/vazia nunca autentica nenhum token, mesmo vazio - a
+        # checagem `not expected_key` decide isso ANTES de qualquer
+        # chamada a compare_digest, então este nunca recebe None. Os dois
+        # lados são explicitamente codificados para bytes (mesmo tipo),
+        # o que também torna caracteres não-ASCII no token seguros (nunca
+        # gera TypeError) - eles só resultam em bytes diferentes, e
+        # portanto em rejeição.
+        if not expected_key or not hmac.compare_digest(
+            token.encode('utf-8'),
+            expected_key.encode('utf-8'),
+        ):
             return jsonify({"error": "Unauthorized"}), 403
             
         return f(*args, **kwargs)

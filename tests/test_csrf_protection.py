@@ -1,6 +1,9 @@
+import hmac
 import uuid
 from datetime import datetime
 from unittest.mock import patch
+
+import pytest
 
 from app.extensions import db
 from app.models import Organization, OrganizationMember, OrganizationProduct, Product, Role, User
@@ -434,6 +437,162 @@ class TestApiLeadsExemptFromCSRF:
             headers={"Authorization": "Bearer chave-totalmente-errada-forjada"},
         )
         assert response.status_code == 403
+
+
+# Issue #43: comparação de tempo constante (hmac.compare_digest) para
+# validar a API key do endpoint de leads - substitui `token != expected_key`.
+# Cobre comportamento observável (nunca duração/latência, estatisticamente
+# frágil em CI) e o mecanismo real via spy em hmac.compare_digest. Valores
+# usados são todos sintéticos, nunca um segredo real.
+class TestApiLeadsConstantTimeKeyComparison:
+    @pytest.mark.parametrize(
+        "auth_header_value",
+        ["Basic algum-token-basico", "BearerSemEspaco", "bearer minusculo-invalido"],
+        ids=["scheme-basic", "sem-espaco", "scheme-minusculo"],
+    )
+    def test_malformed_authorization_header_returns_401(self, client, monkeypatch, auth_header_value):
+        monkeypatch.setenv("HUB_API_KEY", "chave-sintetica-malformado-issue43")
+        response = client.post(
+            "/api/v1/leads",
+            json={
+                "idempotency_key": str(uuid.uuid4()),
+                "name": "Lead Header Malformado",
+                "email": "lead.header.malformado.issue43@example.com",
+            },
+            headers={"Authorization": auth_header_value},
+        )
+        assert response.status_code == 401
+
+    @pytest.mark.parametrize("missing_or_empty", [None, ""], ids=["ausente", "vazia"])
+    def test_missing_or_empty_hub_api_key_rejects_syntactically_valid_bearer_token(
+        self, client, monkeypatch, missing_or_empty
+    ):
+        if missing_or_empty is None:
+            monkeypatch.delenv("HUB_API_KEY", raising=False)
+        else:
+            monkeypatch.setenv("HUB_API_KEY", missing_or_empty)
+
+        response = client.post(
+            "/api/v1/leads",
+            json={
+                "idempotency_key": str(uuid.uuid4()),
+                "name": "Lead Config Ausente Vazia",
+                "email": "lead.config.ausente.vazia.issue43@example.com",
+            },
+            headers={"Authorization": "Bearer token-sintaticamente-valido-qualquer"},
+        )
+        assert response.status_code == 403
+
+    @pytest.mark.parametrize("missing_or_empty", [None, ""], ids=["ausente", "vazia"])
+    def test_missing_or_empty_hub_api_key_never_accepts_empty_token(
+        self, client, monkeypatch, missing_or_empty
+    ):
+        if missing_or_empty is None:
+            monkeypatch.delenv("HUB_API_KEY", raising=False)
+        else:
+            monkeypatch.setenv("HUB_API_KEY", missing_or_empty)
+
+        # "Bearer " com espaço à direita e nada depois - após o split no
+        # header, o token recebido pela rota é a string vazia.
+        response = client.post(
+            "/api/v1/leads",
+            json={
+                "idempotency_key": str(uuid.uuid4()),
+                "name": "Lead Token Vazio",
+                "email": "lead.token.vazio.issue43@example.com",
+            },
+            headers={"Authorization": "Bearer "},
+        )
+        assert response.status_code == 403
+
+    def test_non_ascii_token_returns_403_not_500(self, client, monkeypatch):
+        monkeypatch.setenv("HUB_API_KEY", "chave-sintetica-unicode-issue43")
+        response = client.post(
+            "/api/v1/leads",
+            json={
+                "idempotency_key": str(uuid.uuid4()),
+                "name": "Lead Token Unicode",
+                "email": "lead.token.unicode.issue43@example.com",
+            },
+            headers={"Authorization": "Bearer tôken-com-acentuação-🔒"},
+        )
+        assert response.status_code == 403
+
+    def test_response_never_contains_token_or_configured_key(self, client, monkeypatch):
+        monkeypatch.setenv("HUB_API_KEY", "chave-sintetica-nao-deve-vazar-issue43")
+        forged_token = "token-forjado-nao-deve-aparecer-issue43"
+        response = client.post(
+            "/api/v1/leads",
+            json={
+                "idempotency_key": str(uuid.uuid4()),
+                "name": "Lead Sem Vazamento",
+                "email": "lead.sem.vazamento.issue43@example.com",
+            },
+            headers={"Authorization": f"Bearer {forged_token}"},
+        )
+        body = response.data.decode("utf-8")
+        assert response.status_code == 403
+        assert forged_token not in body
+        assert "chave-sintetica-nao-deve-vazar-issue43" not in body
+
+    def test_compare_digest_called_with_matching_byte_arguments_when_key_configured(self, client, monkeypatch):
+        synthetic_key = "chave-sintetica-mecanismo-issue43"
+        real_compare_digest = hmac.compare_digest
+        calls = []
+
+        def _spy(a, b):
+            calls.append((a, b))
+            return real_compare_digest(a, b)
+
+        with monkeypatch.context() as m:
+            m.setenv("HUB_API_KEY", synthetic_key)
+            m.setattr(hmac, "compare_digest", _spy)
+            response = client.post(
+                "/api/v1/leads",
+                json={
+                    "idempotency_key": str(uuid.uuid4()),
+                    "name": "Lead Mecanismo Compare Digest",
+                    "email": "lead.mecanismo.compare.digest.issue43@example.com",
+                },
+                headers={"Authorization": f"Bearer {synthetic_key}"},
+            )
+
+        assert response.status_code == 201
+        assert len(calls) == 1
+        token_arg, key_arg = calls[0]
+        assert isinstance(token_arg, bytes)
+        assert isinstance(key_arg, bytes)
+        assert token_arg == synthetic_key.encode("utf-8")
+        assert key_arg == synthetic_key.encode("utf-8")
+
+    @pytest.mark.parametrize("missing_or_empty", [None, ""], ids=["ausente", "vazia"])
+    def test_compare_digest_not_called_when_hub_api_key_missing_or_empty(
+        self, client, monkeypatch, missing_or_empty
+    ):
+        calls = []
+
+        def _spy(a, b):
+            calls.append((a, b))
+            return False
+
+        with monkeypatch.context() as m:
+            if missing_or_empty is None:
+                m.delenv("HUB_API_KEY", raising=False)
+            else:
+                m.setenv("HUB_API_KEY", missing_or_empty)
+            m.setattr(hmac, "compare_digest", _spy)
+            response = client.post(
+                "/api/v1/leads",
+                json={
+                    "idempotency_key": str(uuid.uuid4()),
+                    "name": "Lead Mecanismo Sem Chave",
+                    "email": "lead.mecanismo.sem.chave.issue43@example.com",
+                },
+                headers={"Authorization": "Bearer token-sintaticamente-valido-qualquer"},
+            )
+
+        assert response.status_code == 403
+        assert calls == []
 
 
 # 18: a exceção da API não se aplica a nenhuma rota HTML
