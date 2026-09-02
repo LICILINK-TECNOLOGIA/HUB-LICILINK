@@ -183,6 +183,18 @@ class OrganizationService:
         retorno (`OrganizationMember`) preservados - usado como helper de
         setup por dezenas de outros testes."""
         try:
+            # Issue #49: valida `role_name` ANTES de qualquer consulta/criação
+            # de Role, associação, flush, auditoria ou commit - `Role.name` é
+            # `nullable=False`, mas não impede string vazia, então sem esta
+            # checagem `role_name=""` chegava a criar e persistir uma `Role`
+            # vazia (ver reprodução na Issue #49). `strip()` é usado somente
+            # para decidir se o valor é vazio - o valor original (sem strip)
+            # continua sendo o que segue para a consulta/criação da Role,
+            # exatamente como antes desta correção (nenhuma normalização de
+            # espaços nas extremidades de um nome válido).
+            if not isinstance(role_name, str) or not role_name.strip():
+                raise OrganizationError("Papel inválido: não pode ser vazio.")
+
             OrganizationService._reject_internal_admin_as_member(user_id)
 
             # Verifica se já existe um vínculo, em qualquer status. Nunca cria
