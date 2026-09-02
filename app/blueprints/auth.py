@@ -1,6 +1,6 @@
-from flask import Blueprint, render_template, redirect, url_for, flash, request, session
+from flask import Blueprint, current_app, render_template, redirect, url_for, flash, request, session
 from flask_login import login_user, logout_user, login_required
-from ..services.auth_service import AuthService
+from ..services.auth_service import AuthService, AuthError, AuthOperationError
 from ..extensions import limiter
 
 auth_bp = Blueprint('auth', __name__)
@@ -41,11 +41,15 @@ def register():
             pending = AuthService.start_registration(name, email, password)
             session['pending_registration_id'] = str(pending.id)
             return redirect(url_for('auth.verify'))
-        except ValueError as e:
+        except AuthOperationError as e:
+            current_app.logger.exception('Falha inesperada ao processar registro')
             flash(str(e), 'error')
-        except Exception as e:
+        except AuthError as e:
+            flash(str(e), 'error')
+        except Exception:
+            current_app.logger.exception('Falha inesperada e não classificada ao processar registro')
             flash('Ocorreu um erro inesperado.', 'error')
-            
+
     return render_template('auth/register.html')
 
 @auth_bp.route('/verify', methods=['GET', 'POST'])
@@ -63,9 +67,19 @@ def verify():
             login_user(user)
             flash('E-mail verificado com sucesso! Bem-vindo.', 'success')
             return redirect(url_for('dashboard.index'))
-        except ValueError as e:
+        except AuthOperationError as e:
+            current_app.logger.exception(
+                'Falha inesperada ao verificar e-mail (pending_id=%s)', pending_id
+            )
             flash(str(e), 'error')
-            
+        except AuthError as e:
+            flash(str(e), 'error')
+        except Exception:
+            current_app.logger.exception(
+                'Falha inesperada e não classificada ao verificar e-mail (pending_id=%s)', pending_id
+            )
+            flash('Ocorreu um erro inesperado.', 'error')
+
     return render_template('auth/verify.html')
 
 @auth_bp.route('/resend-code', methods=['POST'])
@@ -78,9 +92,19 @@ def resend_code():
     try:
         AuthService.resend_code(pending_id)
         flash('Um novo código foi enviado para o seu e-mail.', 'success')
-    except ValueError as e:
+    except AuthOperationError as e:
+        current_app.logger.exception(
+            'Falha inesperada ao reenviar código (pending_id=%s)', pending_id
+        )
         flash(str(e), 'error')
-        
+    except AuthError as e:
+        flash(str(e), 'error')
+    except Exception:
+        current_app.logger.exception(
+            'Falha inesperada e não classificada ao reenviar código (pending_id=%s)', pending_id
+        )
+        flash('Ocorreu um erro inesperado.', 'error')
+
     return redirect(url_for('auth.verify'))
 
 @auth_bp.route('/logout', methods=['POST'])
