@@ -34,6 +34,24 @@ class AuthOperationError(ValueError):
     reaproveitadas diretamente, cada domínio tem seu próprio par."""
 
 
+# Issue #51 (CWE-208): hash dummy fixo, calculado uma única vez na
+# importação deste módulo (nunca dentro de `authenticate`, nunca por
+# requisição) - usado para executar a mesma primitiva de verificação de
+# senha mesmo quando o e-mail não corresponde a nenhum usuário,
+# eliminando a assimetria de tempo entre "conta inexistente" (antes:
+# nenhuma verificação de hash era executada) e "senha incorreta"
+# (verificação real sempre executada). Gerado a partir de uma string
+# aleatória sintética (`secrets.token_hex`, nunca uma senha real ou
+# reutilizada do projeto) via a mesma `generate_password_hash` sem
+# nenhum argumento extra usada por `User.hash_password` - herda
+# automaticamente o mesmo algoritmo/parâmetros (scrypt, defaults do
+# Werkzeug instalado), sem duplicar nem hardcodar configuração. Nunca
+# pertence a um usuário, nunca é persistido, nunca é logado/impresso; o
+# resultado da verificação contra ele em `authenticate` é sempre
+# descartado, nunca autentica ninguém.
+_DUMMY_PASSWORD_HASH = werkzeug.security.generate_password_hash(secrets.token_hex(32))
+
+
 class AuthService:
     @staticmethod
     def start_registration(name, email, password):
@@ -270,8 +288,42 @@ class AuthService:
     @staticmethod
     def authenticate(email, password):
         email = email.lower().strip()
+        # Issue #51: guarda separadamente se `password` já era string
+        # (ex.: `None` quando o campo do formulário está ausente) do valor
+        # seguro (`safe_password`) que será de fato passado à primitiva de
+        # hash - `check_password`/`check_password_hash` exigem uma string e
+        # levantam `AttributeError`/`TypeError` para `None` ou outro tipo.
+        # `safe_password` só existe para dar à primitiva algo com que
+        # trabalhar (preserva a mesma operação de hash/tempo em ambos os
+        # caminhos, evitando recriar a assimetria original); o tipo
+        # originalmente inválido nunca deve poder autenticar por si só,
+        # mesmo que a verificação (por hash legado, bug ou mock em teste)
+        # retorne `True` para esse valor - por isso `password_was_string`
+        # é usado abaixo para forçar a falha, independente do resultado
+        # real do verificador. Para uma senha originalmente string
+        # (inclusive `""` genuína, enviada de fato pelo usuário), o
+        # comportamento permanece exatamente o mesmo de antes desta Issue.
+        password_was_string = isinstance(password, str)
+        safe_password = password if password_was_string else ""
         user = User.query.filter_by(email=email).first()
-        if user and user.check_password(password):
+
+        if user is not None:
+            password_matches = user.check_password(safe_password)
+            if not password_was_string:
+                # Nunca autentica com um tipo originalmente inválido,
+                # mesmo que o verificador retorne `True` para o valor
+                # seguro usado internamente - a verificação ainda roda
+                # (mesmo custo/tempo), apenas o resultado é descartado.
+                password_matches = False
+        else:
+            # Issue #51: mesmo sem usuário correspondente, executa a
+            # mesma primitiva de verificação de senha (contra o hash
+            # dummy do módulo, nunca contra uma credencial real) - o
+            # resultado é sempre descartado, nunca autentica.
+            werkzeug.security.check_password_hash(_DUMMY_PASSWORD_HASH, safe_password)
+            password_matches = False
+
+        if user and password_matches:
             if user.email_verified_at is None:
                 raise ValueError("E-mail não verificado.")
             AuditService.log_action('user_login', user_id=user.id)
