@@ -15,7 +15,16 @@ def login():
         try:
             user = AuthService.authenticate(email, password)
             if user:
-                login_user(user)
+                # Issue #53: só limpa `pending_registration_id` quando
+                # `login_user` de fato aceita a sessão como autenticada
+                # (retorna True) - nunca em credenciais inválidas/e-mail
+                # não verificado (que nem chegam aqui). `login_user` só
+                # retorna False se `user.is_active` for falso (nunca
+                # ocorre hoje, já que essa coluna nunca é definida como
+                # False em nenhum lugar do projeto); o redirect permanece
+                # o mesmo de antes, incondicional quando `user` é truthy.
+                if login_user(user):
+                    session.pop('pending_registration_id', None)
                 return redirect(url_for('dashboard.index'))
             else:
                 flash('Credenciais inválidas.', 'error')
