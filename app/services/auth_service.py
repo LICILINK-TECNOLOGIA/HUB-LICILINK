@@ -79,8 +79,20 @@ class AuthService:
         # hash é calculado aqui e guardado, já hasheado, em
         # PendingEmailVerification - a senha em texto puro nunca chega a ser
         # persistida, nem mesmo temporariamente.
-        password_hash = User.hash_password(password)
-        
+        #
+        # Issue #57: `validate_password_strength` (chamada internamente por
+        # `hash_password`) levanta um `ValueError` puro - sozinho, não seria
+        # capturado pelo `except AuthError` da rota `/register` (classe irmã,
+        # não superclasse, de `AuthError`), caindo no `except Exception`
+        # genérico e exibindo apenas "Ocorreu um erro inesperado.". A
+        # mensagem já é segura/curada por `validate_password_strength` (nunca
+        # inclui a senha) - só precisa ser reclassificada como erro esperado
+        # de domínio para chegar ao usuário.
+        try:
+            password_hash = User.hash_password(password)
+        except ValueError as exc:
+            raise AuthError(str(exc)) from exc
+
         # 5. Calcular expiração
         ttl = current_app.config.get('VERIFICATION_CODE_TTL', 600)
         
