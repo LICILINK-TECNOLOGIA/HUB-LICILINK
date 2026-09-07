@@ -67,6 +67,17 @@
     }
     .role-owner { background-color: #E3F2FD; color: #1565C0; }
     .role-admin { background-color: #FFF3E0; color: #E65100; }
+
+    .member-status-badge {
+        display: inline-block;
+        padding: 4px 10px;
+        border-radius: 12px;
+        font-size: 0.8rem;
+        font-weight: 600;
+    }
+    .member-status-active { background-color: #E8F5E9; color: #2E7D32; }
+    .member-status-suspended { background-color: #FFF3E0; color: #E65100; }
+    .member-status-removed { background-color: #FFEBEE; color: #C62828; }
     
     .btn-sm {
         padding: 0.25rem 0.75rem;
@@ -145,6 +156,7 @@
                     <th>Nome</th>
                     <th>E-mail</th>
                     <th>Papel</th>
+                    <th>Status</th>
                     <th>Ações</th>
                 </tr>
             </thead>
@@ -159,6 +171,18 @@
                         </span>
                     </td>
                     <td>
+                        {% if member.status == 'active' %}
+                            <span class="member-status-badge member-status-active">ATIVO</span>
+                        {% elif member.status == 'suspended' %}
+                            <span class="member-status-badge member-status-suspended">SUSPENSO</span>
+                        {% elif member.status == 'removed' %}
+                            <span class="member-status-badge member-status-removed">REMOVIDO</span>
+                        {% else %}
+                            <span class="member-status-badge">{{ member.status|upper }}</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if member.status == 'active' %}
                         <form action="{{ url_for('admin.change_member_role', org_id=org.id, user_id=member.user_id) }}" method="POST" style="display: inline-block;">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <select name="role" onchange="this.form.submit()" style="padding: 2px; border-radius: 4px;">
@@ -167,16 +191,27 @@
                                 {% endfor %}
                             </select>
                         </form>
-                        
+
                         <form action="{{ url_for('admin.remove_member', org_id=org.id, user_id=member.user_id) }}" method="POST" style="display: inline-block; margin-left: 10px;">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <button type="submit" class="btn btn-sm" style="background-color: #FFEBEE; color: #C62828; border: none; cursor: pointer;" onclick="return confirm('Remover membro?')">Remover</button>
                         </form>
+                        {% elif member.status == 'removed' %}
+                        <form action="{{ url_for('admin.restore_member', org_id=org.id, user_id=member.user_id) }}" method="POST" style="display: inline-block;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-sm btn-primary" onclick="return confirm('Restaurar este membro?')">Restaurar</button>
+                        </form>
+                        {% elif member.status == 'suspended' %}
+                        <form action="{{ url_for('admin.reactivate_member', org_id=org.id, user_id=member.user_id) }}" method="POST" style="display: inline-block;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-sm btn-primary" onclick="return confirm('Reativar este membro?')">Reativar</button>
+                        </form>
+                        {% endif %}
                     </td>
                 </tr>
                 {% else %}
                 <tr>
-                    <td colspan="4" class="text-center">Nenhum membro vinculado a esta organização.</td>
+                    <td colspan="5" class="text-center">Nenhum membro vinculado a esta organização.</td>
                 </tr>
                 {% endfor %}
             </tbody>

@@ -171,6 +171,58 @@ def remove_member(org_id, user_id):
         flash('Não foi possível remover o membro. Tente novamente.', 'error')
     return redirect(url_for('admin.org_details', org_id=org_id))
 
+@admin_bp.route('/organizations/<uuid:org_id>/members/<uuid:user_id>/restore', methods=['POST'])
+def restore_member(org_id, user_id):
+    # Issue #60: única ação administrativa que reverte um vínculo REMOVED -
+    # delega inteiramente para OrganizationService.restore_removed_member
+    # (nenhuma regra de negócio duplicada aqui), mesmo padrão de
+    # tratamento de exceção/log/flash/redirect das demais rotas deste
+    # blueprint.
+    try:
+        OrganizationService.restore_removed_member(org_id, user_id)
+        flash('Membro restaurado com sucesso.', 'success')
+    except OrganizationOperationError as e:
+        current_app.logger.exception(
+            'Falha inesperada ao restaurar membro (org_id=%s, user_id=%s)',
+            org_id, user_id,
+        )
+        flash(str(e), 'error')
+    except OrganizationError as e:
+        flash(str(e), 'error')
+    except Exception:
+        current_app.logger.exception(
+            'Falha inesperada e não classificada ao restaurar membro (org_id=%s, user_id=%s)',
+            org_id, user_id,
+        )
+        flash('Não foi possível restaurar o membro. Tente novamente.', 'error')
+    return redirect(url_for('admin.org_details', org_id=org_id))
+
+@admin_bp.route('/organizations/<uuid:org_id>/members/<uuid:user_id>/reactivate', methods=['POST'])
+def reactivate_member(org_id, user_id):
+    # Issue #60: única ação administrativa que reverte um vínculo SUSPENDED -
+    # delega inteiramente para OrganizationService.reactivate_member
+    # (nenhuma regra de negócio duplicada aqui), mesmo padrão de
+    # tratamento de exceção/log/flash/redirect das demais rotas deste
+    # blueprint.
+    try:
+        OrganizationService.reactivate_member(org_id, user_id)
+        flash('Membro reativado com sucesso.', 'success')
+    except OrganizationOperationError as e:
+        current_app.logger.exception(
+            'Falha inesperada ao reativar membro (org_id=%s, user_id=%s)',
+            org_id, user_id,
+        )
+        flash(str(e), 'error')
+    except OrganizationError as e:
+        flash(str(e), 'error')
+    except Exception:
+        current_app.logger.exception(
+            'Falha inesperada e não classificada ao reativar membro (org_id=%s, user_id=%s)',
+            org_id, user_id,
+        )
+        flash('Não foi possível reativar o membro. Tente novamente.', 'error')
+    return redirect(url_for('admin.org_details', org_id=org_id))
+
 @admin_bp.route('/users/<uuid:user_id>/organization', methods=['POST'])
 def link_user_to_org(user_id):
     role_name = request.form.get('role', 'owner')

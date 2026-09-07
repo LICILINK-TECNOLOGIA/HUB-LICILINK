@@ -275,6 +275,16 @@ class OrganizationService:
             if not member:
                 raise OrganizationError("O usuário não pertence a esta organização.")
 
+            # Issue #60: um vínculo que não está `active` (suspenso ou
+            # removido) nunca pode ter seu papel alterado - isso mudaria o
+            # histórico de um vínculo que já não concede acesso, sem
+            # nenhum efeito visível e sem passar pela restauração/
+            # reativação explícita (restore_removed_member/
+            # reactivate_member). Checado antes de qualquer outra
+            # validação ou mutação.
+            if member.status != OrganizationMemberStatus.ACTIVE.value:
+                raise OrganizationError("Esta operação só é permitida para vínculos ativos.")
+
             new_role = Role.query.filter_by(name=new_role_name).first()
             if not new_role:
                 raise OrganizationError("O papel especificado não existe.")
