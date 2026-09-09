@@ -91,7 +91,14 @@
     .product-action {
         margin-top: auto;
     }
-    
+
+    .product-action .btn:disabled {
+        background-color: #EEEEEE;
+        color: var(--text-muted);
+        cursor: not-allowed;
+        box-shadow: none;
+    }
+
     .status-badge {
         position: absolute;
         top: 1rem;
@@ -178,7 +185,7 @@
                 {% if item.has_access %}
                     <a href="{{ item.product.url }}" class="btn btn-primary w-100" target="_blank">Acessar Sistema</a>
                 {% else %}
-                    <a href="#" class="btn btn-outline w-100" style="color: var(--primary-blue); border-color: var(--primary-blue);">Conhecer</a>
+                    <button type="button" class="btn w-100" disabled aria-disabled="true">Em breve</button>
                 {% endif %}
             </div>
         </div>
