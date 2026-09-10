@@ -52,6 +52,15 @@ class Config:
     RESEND_API_KEY = os.getenv('RESEND_API_KEY')
     EMAIL_FROM = os.getenv('EMAIL_FROM')
     EMAIL_REPLY_TO = os.getenv('EMAIL_REPLY_TO')
+
+    # Issue #64: janela curta de convivência entre a credencial anterior e
+    # a nova durante uma rotação de OrganizationProductInstallationCredential
+    # - não é um segredo (nunca autentica nada sozinha), só a duração
+    # (em segundos) pela qual a credencial anterior continua aceita após
+    # uma rotação, antes de ser tratada como revogada.
+    INSTALLATION_CREDENTIAL_ROTATION_GRACE_SECONDS = int(
+        os.getenv('INSTALLATION_CREDENTIAL_ROTATION_GRACE_SECONDS', 300)
+    )
 class DevelopmentConfig(Config):
     DEBUG = True
     IS_PRODUCTION = False

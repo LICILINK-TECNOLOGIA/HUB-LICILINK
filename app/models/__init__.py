@@ -1,7 +1,13 @@
 from .base import BaseModel
 from .identity import User, Organization, OrganizationMember, PendingEmailVerification
 from .authorization import Role, Permission, RolePermission
-from .access import Product, ProductPermission, OrganizationProduct, OrganizationProductInstallation
+from .access import (
+    Product,
+    ProductPermission,
+    OrganizationProduct,
+    OrganizationProductInstallation,
+    OrganizationProductInstallationCredential,
+)
 from .crm import Lead
 from .audit import AuditLog
 
@@ -18,6 +24,7 @@ __all__ = [
     'ProductPermission',
     'OrganizationProduct',
     'OrganizationProductInstallation',
+    'OrganizationProductInstallationCredential',
     'Lead',
     'AuditLog'
 ]

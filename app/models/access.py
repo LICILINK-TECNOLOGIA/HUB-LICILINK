@@ -113,3 +113,78 @@ class OrganizationProductInstallation(BaseModel):
 
     # Relacionamentos
     organization_product = db.relationship('OrganizationProduct', back_populates='installation')
+    # Issue #64: histórico completo de credenciais já emitidas para esta
+    # instalação - relação um-para-muitos de verdade (nunca uselist=False
+    # aqui, ao contrário de `installation` acima), porque uma instalação
+    # tem várias credenciais ao longo do tempo (emissão inicial + cada
+    # rotação), mesmo que no máximo uma esteja "atual"
+    # (`revoked_at IS NULL`, garantido pelo índice único parcial em
+    # `OrganizationProductInstallationCredential.__table_args__`) e no
+    # máximo uma outra em janela curta de rotação a qualquer momento -
+    # ambos controlados pelo service, nunca pela cascade do relacionamento
+    # em si. cascade="all, delete-orphan" só age em exclusão física real
+    # da instalação (via ORM) - nunca em revogação/rotação, que apenas
+    # marcam `revoked_at`, sem jamais remover nenhuma linha da coleção.
+    credentials = db.relationship(
+        'OrganizationProductInstallationCredential',
+        back_populates='organization_product_installation',
+        cascade="all, delete-orphan",
+    )
+
+
+class OrganizationProductInstallationCredential(BaseModel):
+    """Issue #64: credencial simétrica de uma OrganizationProductInstallation
+    - fundação para a autenticação servidor-servidor da federação (Issue
+    #62). Cada linha é uma credencial real já emitida (nunca sobrescrita);
+    `revoked_at` marca a transição de estado (nunca uma exclusão):
+    `NULL` = credencial atual, sem revogação agendada; um instante FUTURO
+    = credencial anterior ainda aceita durante a janela curta de rotação
+    (`Config.INSTALLATION_CREDENTIAL_ROTATION_GRACE_SECONDS`); um instante
+    já passado = credencial revogada/expirada, rejeitada pela
+    autenticação. Nunca armazena o segredo em claro - só `secret_hash`
+    (SHA-256 do segredo aleatório de alta entropia, nunca hash lento tipo
+    scrypt/PBKDF2, desproporcional para um segredo já CSPRNG de 256 bits).
+    Sem nenhuma relação com plano comercial ou quota de armazenamento."""
+    __tablename__ = 'organization_product_installation_credentials'
+    __table_args__ = (
+        # Índice regular (não único) só para performance de busca por
+        # instalação - nomeado explicitamente (em vez de `index=True` na
+        # coluna, que geraria o nome padrão `ix_<tabela>_<coluna>` e
+        # excederia os 63 bytes de identificador do PostgreSQL, dado o
+        # tamanho dos nomes de tabela/coluna envolvidos).
+        db.Index(
+            'ix_org_prod_installation_credentials_installation_id',
+            'organization_product_installation_id',
+        ),
+        # Índice único PARCIAL: garante no banco, para PostgreSQL E
+        # SQLite (usado nos testes), que no máximo UMA linha por
+        # instalação pode ter `revoked_at IS NULL` ao mesmo tempo - a
+        # credencial "atual" é sempre única de verdade, nunca depende
+        # somente da disciplina do service para ser garantida.
+        db.Index(
+            'uq_org_prod_installation_credential_active',
+            'organization_product_installation_id',
+            unique=True,
+            sqlite_where=db.text('revoked_at IS NULL'),
+            postgresql_where=db.text('revoked_at IS NULL'),
+        ),
+    )
+
+    organization_product_installation_id = db.Column(
+        UUID(as_uuid=True),
+        db.ForeignKey('organization_product_installations.id', ondelete='CASCADE'),
+        nullable=False,
+    )
+
+    # SHA-256 hexdigest do segredo aleatório de alta entropia - tamanho
+    # fixo de 64 caracteres, sem truncamento.
+    secret_hash = db.Column(db.String(64), nullable=False)
+
+    # NULL = atual (sem revogação agendada); futuro = anterior, ainda
+    # aceita durante a janela de rotação; passado = revogada/expirada.
+    revoked_at = db.Column(db.DateTime(timezone=True), nullable=True)
+
+    # Relacionamentos
+    organization_product_installation = db.relationship(
+        'OrganizationProductInstallation', back_populates='credentials'
+    )
