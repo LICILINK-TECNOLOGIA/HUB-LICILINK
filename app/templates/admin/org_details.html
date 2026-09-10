@@ -114,7 +114,11 @@
             <h2 style="margin-top: 0.5rem;">{{ org.legal_name }}</h2>
         </div>
         <div>
-            <span class="role-badge" style="background-color: #E8F5E9; color: #2E7D32;">ATIVA</span>
+            {% if org.is_active %}
+                <span class="role-badge org-status-badge" style="background-color: #E8F5E9; color: #2E7D32;">ATIVA</span>
+            {% else %}
+                <span class="role-badge org-status-badge" style="background-color: #FFEBEE; color: #C62828;">INATIVA</span>
+            {% endif %}
         </div>
     </div>
 
