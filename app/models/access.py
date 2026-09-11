@@ -130,6 +130,18 @@ class OrganizationProductInstallation(BaseModel):
         back_populates='organization_product_installation',
         cascade="all, delete-orphan",
     )
+    # Issue #65: códigos de lançamento emitidos para esta instalação -
+    # efêmeros, não a trilha de auditoria permanente (essa é `AuditLog`).
+    # Ao contrário de `credentials` acima (cuja rotação/revogação nunca
+    # apaga linha nenhuma), aqui a exclusão física da instalação remove
+    # os códigos em cascata (mesmo raciocínio de `User.launch_codes`) -
+    # desativação lógica da instalação (`is_active=False`) nunca toca
+    # este relacionamento nem exclui nenhum código.
+    launch_codes = db.relationship(
+        'ProductLaunchCode',
+        back_populates='organization_product_installation',
+        cascade="all, delete-orphan",
+    )
 
 
 class OrganizationProductInstallationCredential(BaseModel):
@@ -187,4 +199,77 @@ class OrganizationProductInstallationCredential(BaseModel):
     # Relacionamentos
     organization_product_installation = db.relationship(
         'OrganizationProductInstallation', back_populates='credentials'
+    )
+
+
+class ProductLaunchCode(BaseModel):
+    """Issue #65: registro persistido de uma autorização de lançamento
+    efêmera - criada quando um usuário autorizado inicia o acesso a um
+    produto federado (arquitetura #62). NÃO é uma sessão e NÃO é uma
+    credencial permanente (essa é `OrganizationProductInstallationCredential`,
+    Issue #64): identifica uma tentativa/autorização de uso único e vida
+    curta, iniciada por um usuário específico para uma instalação
+    específica. O código opaco que trafega pelo navegador nunca é
+    persistido em claro - só `code_hash` (SHA-256 hexdigest, mesma
+    convenção de `OrganizationProductInstallationCredential.secret_hash`).
+    Geração do código, hashing, TTL, emissão, revalidação e consumo
+    atômico pertencem a um service futuro (Issue #65 é puramente
+    estrutural: model + migration).
+
+    Sem FK direta para `OrganizationProductInstallationCredential`: são
+    conceitos independentes (o código identifica a autorização do
+    usuário; a credencial autentica o produto/instalação que
+    posteriormente apresenta o código) - rotação/revogação de
+    credencial não invalida estruturalmente nenhum código pendente."""
+    __tablename__ = 'product_launch_codes'
+
+    # SHA-256 hexdigest do código opaco de alta entropia - tamanho fixo
+    # de 64 caracteres, sem truncamento. `unique=True` + `index=True`
+    # juntos produzem um único índice único (mesmo padrão já usado por
+    # `User.email`/`PendingEmailVerification.email`) - nunca dois
+    # índices separados para a mesma coluna.
+    code_hash = db.Column(db.String(64), unique=True, nullable=False, index=True)
+
+    # Usuário que iniciou o lançamento - efêmero, não a trilha de
+    # auditoria permanente (ver `User.launch_codes`): `ondelete='CASCADE'`,
+    # diferente de `AuditLog.user_id` (`SET NULL`, pois `AuditLog` é a
+    # trilha permanente).
+    user_id = db.Column(
+        UUID(as_uuid=True),
+        db.ForeignKey('users.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+
+    # Instalação de destino - `ondelete='CASCADE'`, mesmo padrão já
+    # usado por `OrganizationProductInstallationCredential.organization_product_installation_id`.
+    # Organização e produto são alcançáveis a partir daqui
+    # (instalação -> OrganizationProduct -> organização/produto) -
+    # nunca duplicados nesta tabela.
+    organization_product_installation_id = db.Column(
+        UUID(as_uuid=True),
+        db.ForeignKey('organization_product_installations.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+
+    # Timezone-aware, obrigatório - nenhum TTL fixo aqui; o prazo é
+    # calculado pelo futuro service de emissão (esperado ~30-60s, não
+    # armazenado como configuração nesta Issue estrutural). Indexado em
+    # preparação para uma futura limpeza de códigos expirados (job de
+    # limpeza em si não faz parte desta Issue).
+    expires_at = db.Column(db.DateTime(timezone=True), nullable=False, index=True)
+
+    # NULL = pendente; preenchido uma única vez no consumo bem-sucedido
+    # (futuro service) - este model permite persistir o valor, mas não
+    # decide como/quando preenchê-lo. Estado (pendente/consumido/
+    # expirado) é inteiramente derivado de `consumed_at`/`expires_at`
+    # pelo futuro service - nenhum enum/coluna de status redundante
+    # aqui, e nenhuma propriedade do model depende do relógio.
+    consumed_at = db.Column(db.DateTime(timezone=True), nullable=True)
+
+    # Relacionamentos
+    user = db.relationship('User', back_populates='launch_codes')
+    organization_product_installation = db.relationship(
+        'OrganizationProductInstallation', back_populates='launch_codes'
     )

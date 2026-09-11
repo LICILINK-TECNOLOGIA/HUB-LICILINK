@@ -85,6 +85,15 @@ class User(UserMixin, BaseModel):
 
     # Relacionamentos
     memberships = db.relationship('OrganizationMember', back_populates='user', cascade="all, delete-orphan")
+    # Issue #65: códigos de lançamento são efêmeros, não a trilha de
+    # auditoria permanente (essa é `AuditLog`, que usa `ondelete='SET
+    # NULL'` para sobreviver à exclusão do usuário) - por isso, ao
+    # contrário de `AuditLog.user`, a exclusão física do usuário remove
+    # seus códigos de lançamento em cascata (mesmo padrão já usado por
+    # `memberships` acima). cascade="all, delete-orphan" só age em
+    # exclusão física real (via ORM) - nunca em desativação/revogação
+    # lógica do usuário, que nunca toca este relacionamento.
+    launch_codes = db.relationship('ProductLaunchCode', back_populates='user', cascade="all, delete-orphan")
 
     @staticmethod
     def hash_password(raw_password):

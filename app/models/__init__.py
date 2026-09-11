@@ -7,6 +7,7 @@ from .access import (
     OrganizationProduct,
     OrganizationProductInstallation,
     OrganizationProductInstallationCredential,
+    ProductLaunchCode,
 )
 from .crm import Lead
 from .audit import AuditLog
@@ -25,6 +26,7 @@ __all__ = [
     'OrganizationProduct',
     'OrganizationProductInstallation',
     'OrganizationProductInstallationCredential',
+    'ProductLaunchCode',
     'Lead',
     'AuditLog'
 ]
