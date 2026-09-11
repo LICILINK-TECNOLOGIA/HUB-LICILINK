@@ -61,6 +61,19 @@ class Config:
     INSTALLATION_CREDENTIAL_ROTATION_GRACE_SECONDS = int(
         os.getenv('INSTALLATION_CREDENTIAL_ROTATION_GRACE_SECONDS', 300)
     )
+
+    # Issue #66: prazo de validade do código opaco de lançamento
+    # (ProductLaunchCode, Issue #65) - não é um segredo em si, só a
+    # duração (em segundos) pela qual um código recém-emitido continua
+    # elegível para consumo. O intervalo aceito (1 a 300s) é validado
+    # pelo próprio ProductLaunchCodeService no momento da emissão, nunca
+    # aqui - mesmo padrão de leitura tardia já usado por
+    # INSTALLATION_CREDENTIAL_ROTATION_GRACE_SECONDS. Valor não numérico
+    # no ambiente já falha aqui, na importação deste módulo (mesmo
+    # comportamento de todas as configs `int(os.getenv(...))` acima).
+    PRODUCT_LAUNCH_CODE_TTL_SECONDS = int(
+        os.getenv('PRODUCT_LAUNCH_CODE_TTL_SECONDS', 60)
+    )
 class DevelopmentConfig(Config):
     DEBUG = True
     IS_PRODUCTION = False
