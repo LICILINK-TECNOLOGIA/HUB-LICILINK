@@ -50,11 +50,13 @@ def create_app(config_name=None):
     from .blueprints.dashboard import dashboard_bp
     from .blueprints.api import api_bp
     from .blueprints.admin import admin_bp
-    
+    from .blueprints.federation import federation_bp
+
     app.register_blueprint(health_bp)
     app.register_blueprint(auth_bp)
     app.register_blueprint(dashboard_bp)
     app.register_blueprint(api_bp, url_prefix='/api/v1')
     app.register_blueprint(admin_bp)
+    app.register_blueprint(federation_bp)
     
     return app

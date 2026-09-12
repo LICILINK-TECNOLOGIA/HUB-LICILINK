@@ -18,6 +18,7 @@ from ..models import (
 )
 from .audit_service import AuditService
 from .bootstrap_service import STRUCTURAL_PRODUCTS
+from .installation_credential_service import InstallationCredentialService
 from .organization_service import OrganizationService
 
 # Issue #65/#66: entropia do código opaco de lançamento - mesma constante
@@ -43,6 +44,29 @@ _CANONICAL_PRODUCT_CODES = {spec["code"] for spec in STRUCTURAL_PRODUCTS}
 # de configuração não crie uma janela de uso indevido de horas.
 _MIN_TTL_SECONDS = 1
 _MAX_TTL_SECONDS = 300
+
+# Issue #67: tetos de tamanho para os valores apresentados no consumo -
+# aplicados ANTES de qualquer hash/consulta, tanto no service (defesa
+# própria, para qualquer chamador direto) quanto na rota HTTP (que
+# valida a estrutura da requisição antes mesmo de chamar o service).
+# Nenhum é um tamanho exato: `installation_secret`/`presented_code` têm
+# hoje 43 caracteres (`secrets.token_urlsafe(32)`), mas um teto
+# generoso (256) evita acoplar o contrato a esse tamanho específico,
+# permitindo aumentar a entropia no futuro sem quebrar compatibilidade.
+# `installation_public_id` tem folga sobre os 36 de um UUID canônico -
+# o FORMATO exato é responsabilidade de `authenticate_installation`
+# (nunca lança para um valor malformado), não deste teto.
+_MAX_INSTALLATION_PUBLIC_ID_LENGTH = 64
+_MAX_INSTALLATION_SECRET_LENGTH = 256
+_MAX_PRESENTED_CODE_LENGTH = 256
+
+# Issue #67: contrato mínimo de autorização devolvido no consumo -
+# `_CONTRACT_VERSION` é incrementado só em mudança incompatível de
+# formato; `_CONTRACT_ISSUER` é uma constante estável e documentada
+# (nunca derivada de configuração/ambiente), identificando o HUB como
+# emissor da autorização perante o produto consumidor.
+_CONTRACT_VERSION = 1
+_CONTRACT_ISSUER = "hub.licilink"
 
 
 class ProductLaunchCodeError(ValueError):
@@ -71,6 +95,60 @@ class ProductLaunchCodeOperationError(ValueError):
     código/hash envolvido. Uma colisão de `code_hash` (violação da
     constraint única) sempre cai aqui - nunca uma segunda tentativa
     silenciosa de gerar outro código."""
+
+
+class ProductLaunchCodeAuthorizationRevoked(ProductLaunchCodeError):
+    """Issue #67, Caminho C: o código foi reivindicado atomicamente
+    (`consumed_at` já commitado - ver `consume_launch_code`), mas a
+    revalidação da cadeia de autorização (usuário/organização/vínculo/
+    assinatura/instalação), feita IMEDIATAMENTE após a reivindicação,
+    falhou. É deliberadamente uma SUBCLASSE de `ProductLaunchCodeError`
+    (nunca uma classe irmã nova) - isso permite que a camada HTTP trate
+    as duas com o mesmo `except ProductLaunchCodeError`, sempre `401`,
+    sem nenhum caso especial na rota; ao mesmo tempo, dentro do próprio
+    `consume_launch_code`, um `except` específico para esta subclasse,
+    posicionado ANTES do `except ProductLaunchCodeError` genérico,
+    nunca chama `db.session.rollback()` - o `commit()` da queima já
+    aconteceu antes desta exceção ser levantada, então não há nada
+    pendente para reverter. Nunca cai em `ProductLaunchCodeOperationError`
+    - não é uma falha operacional, é uma decisão de autorização (negar),
+    só que tomada depois que o código já havia sido consumido."""
+
+
+@dataclass(frozen=True)
+class ProductLaunchAuthorization:
+    """Resultado de `consume_launch_code` - contrato mínimo de
+    identidade/autorização exigido pela arquitetura #62 (seção "Contrato
+    mínimo"), devolvido ao produto após o consumo bem-sucedido do
+    código. Todos os campos já são tipos nativos de JSON (UUIDs já
+    convertidos para `str` pelo service, nunca `uuid.UUID` cru) -
+    `dataclasses.asdict()` deste objeto é diretamente serializável.
+
+    Nenhum campo carrega código, hash ou segredo - por isso nenhum
+    campo usa `field(repr=False)` (diferente de `ProductLaunchCodeIssuance.code`);
+    isso é uma confirmação explícita, não uma omissão.
+
+    `role` é estritamente informativo - o HUB nunca deriva nem concede
+    nenhuma permissão Django a partir dele; a decisão sobre o que fazer
+    com esse valor pertence inteiramente ao repositório do GEDO (fora do
+    escopo desta Issue).
+
+    Deliberadamente NÃO inclui `organization_product_status`,
+    `issued_at` nem `expires_at` (decisão de minimização da Issue #67):
+    a decisão de autorização já é definitiva quando esta dataclass é
+    construída (o código já foi consumido); `active`/`trial` concedem o
+    mesmo acesso nesta versão; a janela de sessão do GEDO é calculada a
+    partir do momento do consumo, não da emissão original do código."""
+    contract_version: int
+    issuer: str
+    authorization_id: str
+    sub: str
+    email: str
+    name: str
+    organization_id: str
+    product_code: str
+    installation_public_id: str
+    role: str
 
 
 @dataclass(frozen=True)
@@ -178,6 +256,221 @@ class ProductLaunchCodeService:
     @staticmethod
     def _hash_code(code):
         return hashlib.sha256(code.encode('utf-8')).hexdigest()
+
+    @staticmethod
+    def _validate_bounded_string(value, max_length, error_message):
+        """Valida `value` como `str` não vazia e dentro do teto de
+        tamanho (Issue #67) - ANTES de qualquer hash/consulta. Rejeita
+        `None`, booleano, número, lista, dict ou qualquer outro tipo
+        (não apenas não-string). NUNCA aplica `.strip()`: uma string
+        composta só de espaços passa por esta validação (é uma `str`
+        não vazia dentro do teto) e é rejeitada mais adiante, de forma
+        natural, por nunca corresponder a um hash real - nunca por uma
+        normalização silenciosa aqui. A mensagem nunca inclui o valor
+        bruto recebido nem seu tamanho real."""
+        if not isinstance(value, str) or value == '' or len(value) > max_length:
+            raise ProductLaunchCodeError(error_message)
+        return value
+
+    @staticmethod
+    def consume_launch_code(installation_public_id, installation_secret, presented_code):
+        """Autentica a instalação apresentada e consome atomicamente um
+        código de lançamento (Issue #65/#66) em nome dela, devolvendo o
+        contrato mínimo de autorização (`ProductLaunchAuthorization`) da
+        arquitetura #62.
+
+        Recebe SOMENTE valores apresentados pelo chamador - nunca uma
+        instalação "já confiável": a autenticação
+        (`InstallationCredentialService.authenticate_installation`,
+        Issue #64, reutilizada sem nenhuma alteração) é sempre executada
+        internamente, como o primeiro passo de fato (depois só da
+        validação de tipo/tamanho, mais barata). Não existe caminho para
+        um chamador contornar a credencial passando um objeto de
+        instalação já resolvido.
+
+        Ordem obrigatória: 1) validar tipo/tamanho dos três valores
+        apresentados; 2) autenticar a instalação; 3) só então calcular o
+        SHA-256 do código apresentado; 4) consumir atomicamente o código
+        vinculado exatamente a esta instalação já autenticada.
+
+        Três caminhos de rejeição, todos externamente indistinguíveis
+        (mesma `ProductLaunchCodeError`, mesma resposta HTTP `401` na
+        camada de rota):
+
+        - Caminho A (credencial inválida): `authenticate_installation`
+          retorna `None` - nenhuma busca ou consumo de código ocorre,
+          nenhuma mutação, nenhuma auditoria.
+        - Caminho B (código não elegível): a atualização condicional
+          (`UPDATE ... WHERE code_hash = ... AND
+          organization_product_installation_id = ... AND consumed_at IS
+          NULL AND expires_at > now`) afeta zero linhas - cobre código
+          inexistente, expirado, já consumido, ou emitido para outra
+          instalação, todos com a MESMA rejeição, sem nenhuma nova
+          mutação nem auditoria.
+        - Caminho C (autorização revogada após a reivindicação): o
+          código foi reivindicado (`rowcount == 1`), mas a revalidação
+          subsequente (usuário/organização/vínculo/assinatura/
+          instalação) falha. `consumed_at` é COMMITADO mesmo assim -
+          nunca revertido, nunca deixado pendente para uma nova
+          tentativa - e `ProductLaunchCodeAuthorizationRevoked` é
+          levantada sem `rollback()` (ver a exceção). Nenhuma auditoria
+          de sucesso, nenhuma identidade devolvida.
+
+        Duas requisições concorrentes com o mesmo código: a atualização
+        condicional do Caminho B/reivindicação é uma única instrução
+        atômica, serializada pelo próprio SGBD sobre a mesma linha -
+        garantidamente, no máximo uma das duas obtém `rowcount == 1`
+        (nunca `> 1`, `code_hash` é `unique`); a outra observa
+        `rowcount == 0` e cai no Caminho B, com a mesma resposta
+        genérica de qualquer outro código inválido.
+
+        Auditoria (`organization_product_installation.launch_code_consumed`)
+        e o consumo compartilham a MESMA transação - exatamente um
+        evento por consumo vencedor E autorizado; nenhum evento em
+        qualquer rejeição (A, B ou C). Falha ao gravar a auditoria ou no
+        commit final reverte o consumo inteiro (`rollback()`,
+        `ProductLaunchCodeOperationError`) - `consumed_at` volta a
+        `NULL`, nenhuma auditoria parcial sobrevive."""
+        try:
+            installation_public_id = ProductLaunchCodeService._validate_bounded_string(
+                installation_public_id, _MAX_INSTALLATION_PUBLIC_ID_LENGTH,
+                "Credencial de instalação inválida."
+            )
+            installation_secret = ProductLaunchCodeService._validate_bounded_string(
+                installation_secret, _MAX_INSTALLATION_SECRET_LENGTH,
+                "Credencial de instalação inválida."
+            )
+            presented_code = ProductLaunchCodeService._validate_bounded_string(
+                presented_code, _MAX_PRESENTED_CODE_LENGTH,
+                "Código de lançamento inválido."
+            )
+
+            installation = InstallationCredentialService.authenticate_installation(
+                installation_public_id, installation_secret
+            )
+            if installation is None:
+                raise ProductLaunchCodeError("Credencial de instalação inválida.")
+
+            now = datetime.now(timezone.utc)
+            code_hash = ProductLaunchCodeService._hash_code(presented_code)
+
+            # Caminho B / reivindicação: única instrução atômica -
+            # "verificar e marcar" é logicamente uma única operação,
+            # então não há passo de bloqueio explícito separado (ao
+            # contrário de `InstallationCredentialService.issue_credential`,
+            # que protege um invariante que abrange múltiplos passos).
+            # `synchronize_session=False`: bulk update em SQL puro, sem
+            # tocar o identity map da sessão - a leitura seguinte
+            # (poucas linhas abaixo) é sempre uma consulta nova de
+            # verdade, nunca um objeto reaproveitado.
+            rowcount = db.session.query(ProductLaunchCode).filter(
+                ProductLaunchCode.code_hash == code_hash,
+                ProductLaunchCode.organization_product_installation_id == installation.id,
+                ProductLaunchCode.consumed_at.is_(None),
+                ProductLaunchCode.expires_at > now,
+            ).update({'consumed_at': now}, synchronize_session=False)
+
+            if rowcount == 0:
+                raise ProductLaunchCodeError("Código de lançamento inválido.")
+
+            # A partir daqui, esta linha pertence exclusivamente a esta
+            # requisição, dentro da transação atual - `code_hash` é
+            # `unique`, então esta consulta nunca traz outra linha.
+            launch_code = ProductLaunchCode.query.filter_by(code_hash=code_hash).first()
+
+            # Revalidação completa, cada checagem curto-circuitando a
+            # próxima para nunca desreferenciar um valor ausente - só a
+            # partir de dados já resolvidos no banco (nunca de qualquer
+            # dado apresentado pelo chamador além da credencial/código já
+            # validados acima).
+            authorization_revoked = False
+
+            user = User.query.get(launch_code.user_id)
+            if user is None or not user.is_active or user.email_verified_at is None:
+                authorization_revoked = True
+
+            org_product = None
+            organization = None
+            membership = None
+            product = None
+
+            if not authorization_revoked:
+                org_product = OrganizationProduct.query.get(installation.organization_product_id)
+                if org_product is None or org_product.status not in ('active', 'trial'):
+                    authorization_revoked = True
+
+            if not authorization_revoked:
+                organization = Organization.query.get(org_product.organization_id)
+                if organization is None or not organization.is_active:
+                    authorization_revoked = True
+
+            if not authorization_revoked:
+                membership = OrganizationService.get_active_membership(user.id, organization.id)
+                if membership is None:
+                    authorization_revoked = True
+
+            # Redundante com a autenticação já feita acima (que já exige
+            # instalação ativa), mas revalidado explicitamente aqui - o
+            # estado pode, em teoria, mudar dentro da mesma requisição,
+            # mesmo padrão de paranoia já usado em #66.
+            if not authorization_revoked and not installation.is_active:
+                authorization_revoked = True
+
+            if not authorization_revoked:
+                product = Product.query.get(org_product.product_id)
+                if product is None:
+                    authorization_revoked = True
+
+            if authorization_revoked:
+                # Caminho C: commit AGORA (só a queima de `consumed_at`
+                # feita acima - nenhum `AuditLog` foi adicionado à sessão
+                # neste caminho), depois levanta a exceção dedicada, que
+                # nunca aciona rollback (ver `ProductLaunchCodeAuthorizationRevoked`).
+                db.session.commit()
+                raise ProductLaunchCodeAuthorizationRevoked(
+                    "Não foi possível concluir a autorização. Nenhuma identidade foi liberada."
+                )
+
+            authorization = ProductLaunchAuthorization(
+                contract_version=_CONTRACT_VERSION,
+                issuer=_CONTRACT_ISSUER,
+                authorization_id=str(launch_code.id),
+                sub=str(user.id),
+                email=user.email,
+                name=user.name,
+                organization_id=str(organization.id),
+                product_code=product.code,
+                installation_public_id=str(installation.public_id),
+                role=membership.role.name,
+            )
+
+            AuditService.log_action(
+                'organization_product_installation.launch_code_consumed',
+                user_id=user.id,
+                organization_id=organization.id,
+                resource_type='organization_product_installation',
+                resource_id=installation.id,
+                details={'launch_code_id': str(launch_code.id)},
+                commit=False,
+            )
+
+            db.session.commit()
+        except ProductLaunchCodeAuthorizationRevoked:
+            # O commit da queima (Caminho C) já aconteceu antes desta
+            # exceção ser levantada, alguns parágrafos acima - nunca
+            # `rollback()` aqui, que desfaria apenas a transação ATUAL
+            # (já vazia/nova neste ponto), nunca a anterior já commitada.
+            raise
+        except ProductLaunchCodeError:
+            db.session.rollback()
+            raise
+        except Exception as exc:
+            db.session.rollback()
+            raise ProductLaunchCodeOperationError(
+                "Não foi possível consumir o código de lançamento. Nenhuma alteração foi salva."
+            ) from exc
+
+        return authorization
 
     @staticmethod
     def issue_launch_code(user_id, organization_id, product_code):

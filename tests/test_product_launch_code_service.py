@@ -7,6 +7,7 @@ múltiplos códigos, atomicidade/auditoria e taxonomia de exceções. Nenhuma
 rota, endpoint, UI ou consumo é exercitado aqui (não existem nesta Issue),
 por isso não há teste manual - tudo é validado via service + banco
 efêmero (fixture `app`)."""
+import dataclasses
 import hashlib
 import os
 import subprocess
@@ -36,6 +37,8 @@ from app.services.bootstrap_service import BootstrapService
 from app.services.installation_credential_service import InstallationCredentialService
 from app.services.organization_service import OrganizationService
 from app.services.product_launch_code_service import (
+    ProductLaunchAuthorization,
+    ProductLaunchCodeAuthorizationRevoked,
     ProductLaunchCodeError,
     ProductLaunchCodeIssuance,
     ProductLaunchCodeOperationError,
@@ -148,6 +151,28 @@ def _issue(chain, **overrides):
     organization_id = overrides.get("organization_id", chain["organization"].id)
     product_code = overrides.get("product_code", chain["product"].code)
     return ProductLaunchCodeService.issue_launch_code(user_id, organization_id, product_code)
+
+
+def _build_chain_with_credential_and_code(product_code=None):
+    """Monta a cadeia válida (#66) + emite uma credencial de instalação
+    real (#64) + emite um código de lançamento real (#66) - ponto de
+    partida da maioria dos testes de `consume_launch_code` (Issue #67),
+    já que o consumo exige as duas coisas existindo de verdade."""
+    chain = _build_valid_chain(product_code=product_code)
+    secret = InstallationCredentialService.issue_credential(
+        chain["installation"].id, actor_user_id=None
+    )
+    issuance = _issue(chain)
+    chain["secret"] = secret
+    chain["code"] = issuance.code
+    return chain
+
+
+def _consume(chain, **overrides):
+    public_id = overrides.get("public_id", str(chain["installation"].public_id))
+    secret = overrides.get("secret", chain["secret"])
+    code = overrides.get("code", chain["code"])
+    return ProductLaunchCodeService.consume_launch_code(public_id, secret, code)
 
 
 def _snapshot_counts():
@@ -1030,3 +1055,568 @@ class TestIssueLaunchCodeCompatibility:
             chain = _build_valid_chain()
             result = _issue(chain)
             assert set(result.__dataclass_fields__.keys()) == {"code", "destination_url", "expires_at"}
+
+
+class TestConsumeLaunchCodeSuccess:
+    def test_consumes_valid_code_and_returns_contracted_format(self, app):
+        with app.app_context():
+            chain = _build_chain_with_credential_and_code()
+            result = _consume(chain)
+
+            assert isinstance(result, ProductLaunchAuthorization)
+            assert set(result.__dataclass_fields__.keys()) == {
+                "contract_version", "issuer", "authorization_id", "sub", "email",
+                "name", "organization_id", "product_code", "installation_public_id", "role",
+            }
+
+    def test_contract_fields_types_and_values(self, app):
+        with app.app_context():
+            chain = _build_chain_with_credential_and_code()
+            result = _consume(chain)
+
+            launch_code = ProductLaunchCode.query.filter_by(
+                organization_product_installation_id=chain["installation"].id
+            ).first()
+
+            assert result.contract_version == 1
+            assert isinstance(result.issuer, str) and result.issuer != ""
+            assert result.authorization_id == str(launch_code.id)
+            assert result.sub == str(chain["user"].id)
+            assert result.email == chain["user"].email
+            assert result.name == chain["user"].name
+            assert result.organization_id == str(chain["organization"].id)
+            assert result.product_code == chain["product"].code
+            assert result.installation_public_id == str(chain["installation"].public_id)
+            assert result.role == chain["membership"].role.name
+
+    def test_role_is_only_informative_field_present(self, app):
+        with app.app_context():
+            chain = _build_chain_with_credential_and_code()
+            result = _consume(chain)
+            # Nenhum campo de permissão/privilégio Django - só o nome do
+            # papel, cru, como string.
+            assert isinstance(result.role, str)
+
+    def test_marks_consumed_at_exactly_once(self, app):
+        with app.app_context():
+            chain = _build_chain_with_credential_and_code()
+            _consume(chain)
+
+            launch_code = ProductLaunchCode.query.filter_by(
+                organization_product_installation_id=chain["installation"].id
+            ).first()
+            assert launch_code.consumed_at is not None
+
+    def test_no_side_effects_on_existing_entities(self, app):
+        with app.app_context():
+            chain = _build_chain_with_credential_and_code()
+            before = _snapshot_counts()
+
+            _consume(chain)
+
+            after = _snapshot_counts()
+            assert after["audit_logs"] == before["audit_logs"] + 1
+            for key in ("users", "organizations", "memberships", "products", "org_products",
+                        "installations", "credentials", "launch_codes"):
+                assert after[key] == before[key]
+
+
+class TestConsumeLaunchCodeInputValidation:
+    @pytest.mark.parametrize("bad_value", [None, "", 12345, [], {}, True, "x" * 65])
+    def test_invalid_public_id_raises_domain_error(self, app, bad_value):
+        with app.app_context():
+            chain = _build_chain_with_credential_and_code()
+            with pytest.raises(ProductLaunchCodeError) as exc_info:
+                _consume(chain, public_id=bad_value)
+            assert not isinstance(exc_info.value, ProductLaunchCodeOperationError)
+
+    @pytest.mark.parametrize("bad_value", [None, "", 12345, [], {}, True, "x" * 257])
+    def test_invalid_secret_raises_domain_error(self, app, bad_value):
+        with app.app_context():
+            chain = _build_chain_with_credential_and_code()
+            with pytest.raises(ProductLaunchCodeError) as exc_info:
+                _consume(chain, secret=bad_value)
+            assert not isinstance(exc_info.value, ProductLaunchCodeOperationError)
+
+    @pytest.mark.parametrize("bad_value", [None, "", 12345, [], {}, True, "x" * 257])
+    def test_invalid_code_raises_domain_error(self, app, bad_value):
+        with app.app_context():
+            chain = _build_chain_with_credential_and_code()
+            with pytest.raises(ProductLaunchCodeError) as exc_info:
+                _consume(chain, code=bad_value)
+            assert not isinstance(exc_info.value, ProductLaunchCodeOperationError)
+
+    def test_whitespace_only_code_rejected_without_stripping(self, app):
+        with app.app_context():
+            chain = _build_chain_with_credential_and_code()
+            with pytest.raises(ProductLaunchCodeError):
+                _consume(chain, code="   ")
+            # O código real continua intacto e consumível depois.
+            result = _consume(chain)
+            assert isinstance(result, ProductLaunchAuthorization)
+
+    def test_invalid_inputs_never_reach_authentication_or_mutation(self, app, monkeypatch):
+        with app.app_context():
+            chain = _build_chain_with_credential_and_code()
+            calls = []
+            monkeypatch.setattr(
+                product_launch_code_service_module.InstallationCredentialService,
+                "authenticate_installation",
+                staticmethod(lambda *a, **k: calls.append(a) or None),
+            )
+            before = _snapshot_counts()
+
+            for bad in (None, 12345, [], {}):
+                with pytest.raises(ProductLaunchCodeError):
+                    _consume(chain, public_id=bad)
+                with pytest.raises(ProductLaunchCodeError):
+                    _consume(chain, secret=bad)
+                with pytest.raises(ProductLaunchCodeError):
+                    _consume(chain, code=bad)
+
+            assert calls == []
+            assert _snapshot_counts() == before
+
+    def test_invalid_input_message_never_includes_raw_value(self, app):
+        with app.app_context():
+            chain = _build_chain_with_credential_and_code()
+            suspicious = "<<valor-bruto-suspeito-nao-deve-vazar>>" * 3
+            with pytest.raises(ProductLaunchCodeError) as exc_info:
+                _consume(chain, code=suspicious)
+            assert suspicious not in str(exc_info.value)
+
+
+class TestConsumeLaunchCodePathA:
+    """Caminho A: instalação não autenticada - nenhuma busca/consumo de
+    código, nenhuma mutação, nenhuma auditoria."""
+
+    def _assert_path_a_rejection(self, chain, **overrides):
+        before = _snapshot_counts()
+        with pytest.raises(ProductLaunchCodeError) as exc_info:
+            _consume(chain, **overrides)
+        assert not isinstance(exc_info.value, ProductLaunchCodeOperationError)
+        assert _snapshot_counts() == before
+
+    def test_wrong_secret_rejected(self, app):
+        with app.app_context():
+            chain = _build_chain_with_credential_and_code()
+            self._assert_path_a_rejection(chain, secret="segredo-completamente-errado")
+
+    def test_unknown_public_id_rejected(self, app):
+        with app.app_context():
+            chain = _build_chain_with_credential_and_code()
+            self._assert_path_a_rejection(chain, public_id=str(uuid.uuid4()))
+
+    def test_revoked_credential_rejected(self, app):
+        with app.app_context():
+            chain = _build_chain_with_credential_and_code()
+            InstallationCredentialService.revoke_credential(
+                chain["installation"].id, actor_user_id=None
+            )
+            self._assert_path_a_rejection(chain)
+
+    def test_inactive_installation_rejected(self, app):
+        with app.app_context():
+            chain = _build_chain_with_credential_and_code()
+            chain["installation"].is_active = False
+            db.session.commit()
+            self._assert_path_a_rejection(chain)
+
+    def test_credential_within_grace_period_still_succeeds(self, app):
+        with app.app_context():
+            chain = _build_chain_with_credential_and_code()
+            old_secret = chain["secret"]
+            InstallationCredentialService.rotate_credential(
+                chain["installation"].id, actor_user_id=None
+            )
+
+            result = _consume(chain, secret=old_secret)
+            assert isinstance(result, ProductLaunchAuthorization)
+
+    def test_no_code_query_when_credential_invalid(self, app):
+        """Achado M1-1 da revisão técnica: a versão anterior deste teste
+        espionava a query-property de classe `ProductLaunchCode.query`,
+        mas o UPDATE condicional real usa
+        `db.session.query(ProductLaunchCode).filter(...)` - um caminho
+        totalmente diferente, nunca interceptado por aquele monkeypatch
+        (confirmado empiricamente: o spy antigo sempre reportava `calls
+        == []`, mesmo com a consulta real acontecendo de verdade -
+        garantia falsa). Corrigido observando o SQL efetivamente
+        executado via `before_cursor_execute` (mesmo mecanismo já usado
+        em `TestIssueLaunchCodeDestinationUrl.test_no_extra_installation_query_after_resolution`,
+        Issue #66) - nenhuma instrução tocando `product_launch_codes` é
+        aceitável quando a credencial é inválida. O listener é sempre
+        removido em `finally`, mesmo se a asserção falhar."""
+        with app.app_context():
+            chain = _build_chain_with_credential_and_code()
+            audit_before = AuditLog.query.count()
+
+            statements = []
+
+            def _before_cursor_execute(conn, cursor, statement, parameters, context, executemany):
+                if "product_launch_codes" in statement:
+                    statements.append(statement)
+
+            event.listen(db.engine, "before_cursor_execute", _before_cursor_execute)
+            try:
+                with pytest.raises(ProductLaunchCodeError) as exc_info:
+                    _consume(chain, secret="segredo-completamente-errado")
+            finally:
+                event.remove(db.engine, "before_cursor_execute", _before_cursor_execute)
+
+            assert not isinstance(exc_info.value, ProductLaunchCodeOperationError)
+            assert statements == []
+            assert AuditLog.query.count() == audit_before
+
+            launch_code = ProductLaunchCode.query.filter_by(
+                organization_product_installation_id=chain["installation"].id
+            ).first()
+            assert launch_code.consumed_at is None
+
+
+class TestConsumeLaunchCodePathB:
+    """Caminho B: código não elegível - inexistente, expirado, já
+    consumido, ou de outra instalação. Sempre `rowcount == 0`, nenhuma
+    mutação, nenhuma auditoria."""
+
+    def _assert_path_b_rejection(self, chain, **overrides):
+        before = _snapshot_counts()
+        with pytest.raises(ProductLaunchCodeError) as exc_info:
+            _consume(chain, **overrides)
+        assert not isinstance(exc_info.value, ProductLaunchCodeOperationError)
+        assert _snapshot_counts() == before
+
+    def test_nonexistent_code_rejected(self, app):
+        with app.app_context():
+            chain = _build_chain_with_credential_and_code()
+            self._assert_path_b_rejection(chain, code="codigo-sintetico-que-nunca-foi-emitido")
+
+    def test_already_consumed_code_rejected_on_second_attempt(self, app):
+        with app.app_context():
+            chain = _build_chain_with_credential_and_code()
+            result = _consume(chain)
+            assert isinstance(result, ProductLaunchAuthorization)
+
+            self._assert_path_b_rejection(chain)
+
+    def test_expired_code_rejected(self, app):
+        with app.app_context():
+            chain = _build_chain_with_credential_and_code()
+            launch_code = ProductLaunchCode.query.filter_by(
+                organization_product_installation_id=chain["installation"].id
+            ).first()
+            launch_code.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+            db.session.commit()
+
+            self._assert_path_b_rejection(chain)
+
+    def test_code_from_another_installation_rejected(self, app):
+        with app.app_context():
+            chain_a = _build_chain_with_credential_and_code(product_code="gedo")
+            chain_b = _build_chain_with_credential_and_code(product_code="kalender")
+
+            # Código de A apresentado com a credencial de B.
+            self._assert_path_b_rejection(
+                chain_b, code=chain_a["code"]
+            )
+            # O código de A continua intacto (nunca queimado por essa
+            # tentativa rejeitada).
+            launch_code_a = ProductLaunchCode.query.filter_by(
+                organization_product_installation_id=chain_a["installation"].id
+            ).first()
+            assert launch_code_a.consumed_at is None
+
+    def test_rowcount_zero_does_not_burn_unrelated_code(self, app):
+        with app.app_context():
+            chain = _build_chain_with_credential_and_code()
+            self._assert_path_b_rejection(chain, code="codigo-sintetico-inexistente-issue-67")
+
+            launch_code = ProductLaunchCode.query.filter_by(
+                organization_product_installation_id=chain["installation"].id
+            ).first()
+            assert launch_code.consumed_at is None
+
+
+class TestConsumeLaunchCodePathC:
+    """Caminho C: código reivindicado (rowcount == 1), mas revalidação
+    subsequente falha - `consumed_at` permanece COMMITADO; nenhuma
+    identidade devolvida; nenhuma auditoria de sucesso; a exceção é
+    `ProductLaunchCodeAuthorizationRevoked`, subclasse de
+    `ProductLaunchCodeError`, nunca `ProductLaunchCodeOperationError`."""
+
+    def _assert_path_c(self, chain):
+        before_audit = AuditLog.query.count()
+        with pytest.raises(ProductLaunchCodeAuthorizationRevoked) as exc_info:
+            _consume(chain)
+        assert isinstance(exc_info.value, ProductLaunchCodeError)
+        assert not isinstance(exc_info.value, ProductLaunchCodeOperationError)
+
+        launch_code = ProductLaunchCode.query.filter_by(
+            organization_product_installation_id=chain["installation"].id
+        ).first()
+        assert launch_code.consumed_at is not None  # a queima foi commitada
+        assert AuditLog.query.count() == before_audit  # nenhuma auditoria de sucesso
+
+    def test_user_inactive_after_issuance(self, app):
+        with app.app_context():
+            chain = _build_chain_with_credential_and_code()
+            chain["user"].is_active = False
+            db.session.commit()
+            self._assert_path_c(chain)
+
+    def test_user_unverified_after_issuance(self, app):
+        with app.app_context():
+            chain = _build_chain_with_credential_and_code()
+            chain["user"].email_verified_at = None
+            db.session.commit()
+            self._assert_path_c(chain)
+
+    def test_organization_inactive_after_issuance(self, app):
+        with app.app_context():
+            chain = _build_chain_with_credential_and_code()
+            chain["organization"].is_active = False
+            db.session.commit()
+            self._assert_path_c(chain)
+
+    def test_membership_removed_after_issuance(self, app):
+        with app.app_context():
+            chain = _build_chain_with_credential_and_code()
+            chain["membership"].status = "removed"
+            db.session.commit()
+            self._assert_path_c(chain)
+
+    @pytest.mark.parametrize("status", ["inactive", "suspended"])
+    def test_org_product_not_active_or_trial_after_issuance(self, app, status):
+        with app.app_context():
+            chain = _build_chain_with_credential_and_code()
+            chain["org_product"].status = status
+            db.session.commit()
+            self._assert_path_c(chain)
+
+    def test_installation_deactivated_after_issuance(self, app):
+        with app.app_context():
+            chain = _build_chain_with_credential_and_code()
+            chain["installation"].is_active = False
+            db.session.commit()
+            # Instalação inativa nunca autentica (#64) - então o Caminho
+            # A rejeita antes mesmo de chegar ao código; confirma que a
+            # tentativa falha, sem exigir necessariamente o Caminho C
+            # para este cenário específico (a instalação inativa já é
+            # barrada na própria autenticação).
+            with pytest.raises(ProductLaunchCodeError):
+                _consume(chain)
+            launch_code = ProductLaunchCode.query.filter_by(
+                organization_product_installation_id=chain["installation"].id
+            ).first()
+            assert launch_code.consumed_at is None
+
+    def test_installation_deactivated_strictly_between_authentication_and_revalidation(self, app, monkeypatch):
+        """Cobertura B1 da revisão técnica: a checagem redundante
+        `not installation.is_active` (linha ~416 do service, defesa
+        contra uma mudança de estado ESTRITAMENTE entre a autenticação
+        e a revalidação final) nunca era exercitada -
+        `test_installation_deactivated_after_issuance` desativa a
+        instalação ANTES de chamar `consume_launch_code`, o que cai no
+        Caminho A (rejeitado na própria autenticação, nunca alcança
+        esta linha). Aqui, a instalação é desativada DEPOIS que
+        `authenticate_installation` já retornou - mutando o MESMO
+        objeto Python devolvido (nunca recarregado do banco à parte) -
+        simulando deterministicamente, em um teste síncrono, uma
+        mudança de estado que ocorreria de verdade entre duas
+        requisições concorrentes em produção."""
+        with app.app_context():
+            chain = _build_chain_with_credential_and_code()
+            original_authenticate = (
+                product_launch_code_service_module.InstallationCredentialService.authenticate_installation
+            )
+
+            def _authenticate_then_deactivate(*args, **kwargs):
+                installation = original_authenticate(*args, **kwargs)
+                if installation is not None:
+                    installation.is_active = False
+                return installation
+
+            monkeypatch.setattr(
+                product_launch_code_service_module.InstallationCredentialService,
+                "authenticate_installation",
+                staticmethod(_authenticate_then_deactivate),
+            )
+
+            self._assert_path_c(chain)
+
+    def test_path_c_commit_failure_rolls_back_and_raises_operation_error(self, app, monkeypatch):
+        with app.app_context():
+            chain = _build_chain_with_credential_and_code()
+            installation_id = chain["installation"].id
+            chain["user"].is_active = False
+            db.session.commit()
+
+            def _raise():
+                raise RuntimeError("falha sintetica no commit da queima (Caminho C)")
+            monkeypatch.setattr(db.session, "commit", _raise)
+
+            with pytest.raises(ProductLaunchCodeOperationError) as exc_info:
+                _consume(chain)
+            assert isinstance(exc_info.value.__cause__, RuntimeError)
+
+        with app.app_context():
+            launch_code = ProductLaunchCode.query.filter_by(
+                organization_product_installation_id=installation_id
+            ).first()
+            assert launch_code.consumed_at is None
+
+
+class TestConsumeLaunchCodeAtomicityAndConcurrency:
+    def test_two_sequential_attempts_exactly_one_winner(self, app):
+        with app.app_context():
+            chain = _build_chain_with_credential_and_code()
+
+            first = _consume(chain)
+            assert isinstance(first, ProductLaunchAuthorization)
+
+            with pytest.raises(ProductLaunchCodeError):
+                _consume(chain)
+
+    def test_concurrent_style_claim_yields_single_rowcount_one(self, app):
+        """Simulação transacional válida da corrida (mesmo padrão já
+        aceito nas Issues #64/#65/#66): chama a mesma condição de
+        atualização duas vezes em sequência - a primeira reivindica
+        (`rowcount == 1`), a segunda encontra a condição já falsa
+        (`rowcount == 0`). SQLite não executa conexões verdadeiramente
+        concorrentes; isto não afirma ter reproduzido uma corrida real
+        de duas conexões PostgreSQL."""
+        with app.app_context():
+            chain = _build_chain_with_credential_and_code()
+            code_hash = hashlib.sha256(chain["code"].encode("utf-8")).hexdigest()
+            now = datetime.now(timezone.utc)
+
+            first_rowcount = db.session.query(ProductLaunchCode).filter(
+                ProductLaunchCode.code_hash == code_hash,
+                ProductLaunchCode.organization_product_installation_id == chain["installation"].id,
+                ProductLaunchCode.consumed_at.is_(None),
+                ProductLaunchCode.expires_at > now,
+            ).update({'consumed_at': now}, synchronize_session=False)
+            db.session.commit()
+
+            second_rowcount = db.session.query(ProductLaunchCode).filter(
+                ProductLaunchCode.code_hash == code_hash,
+                ProductLaunchCode.organization_product_installation_id == chain["installation"].id,
+                ProductLaunchCode.consumed_at.is_(None),
+                ProductLaunchCode.expires_at > now,
+            ).update({'consumed_at': now}, synchronize_session=False)
+            db.session.commit()
+
+            assert first_rowcount == 1
+            assert second_rowcount == 0
+
+
+class TestConsumeLaunchCodeAuditAndRollback:
+    def test_exact_audit_event_on_success(self, app):
+        with app.app_context():
+            chain = _build_chain_with_credential_and_code()
+            audit_before = AuditLog.query.filter_by(
+                action="organization_product_installation.launch_code_consumed"
+            ).count()
+
+            _consume(chain)
+
+            logs = AuditLog.query.filter_by(
+                action="organization_product_installation.launch_code_consumed"
+            ).all()
+            assert len(logs) == audit_before + 1
+            log = logs[-1]
+            assert log.user_id == chain["user"].id
+            assert log.organization_id == chain["organization"].id
+            assert log.resource_type == "organization_product_installation"
+            assert log.resource_id == chain["installation"].id
+
+            launch_code = ProductLaunchCode.query.filter_by(
+                organization_product_installation_id=chain["installation"].id
+            ).first()
+            assert log.details == {"launch_code_id": str(launch_code.id)}
+
+            details_str = str(log.details)
+            assert chain["code"] not in details_str
+            assert launch_code.code_hash not in details_str
+
+    def test_rollback_on_audit_failure_unconsumes_code(self, app, monkeypatch):
+        with app.app_context():
+            chain = _build_chain_with_credential_and_code()
+            installation_id = chain["installation"].id
+            before = _snapshot_counts()
+
+            def _raise(*args, **kwargs):
+                raise RuntimeError("falha sintetica de auditoria")
+            monkeypatch.setattr(
+                product_launch_code_service_module.AuditService, "log_action", staticmethod(_raise)
+            )
+
+            with pytest.raises(ProductLaunchCodeOperationError) as exc_info:
+                _consume(chain)
+            assert isinstance(exc_info.value.__cause__, RuntimeError)
+
+        with app.app_context():
+            assert _snapshot_counts() == before
+            launch_code = ProductLaunchCode.query.filter_by(
+                organization_product_installation_id=installation_id
+            ).first()
+            assert launch_code.consumed_at is None
+
+    def test_rollback_on_final_commit_failure_unconsumes_code(self, app, monkeypatch):
+        with app.app_context():
+            chain = _build_chain_with_credential_and_code()
+            installation_id = chain["installation"].id
+            before = _snapshot_counts()
+
+            def _raise():
+                raise RuntimeError("falha sintetica de commit final")
+            monkeypatch.setattr(db.session, "commit", _raise)
+
+            with pytest.raises(ProductLaunchCodeOperationError) as exc_info:
+                _consume(chain)
+            assert isinstance(exc_info.value.__cause__, RuntimeError)
+
+        with app.app_context():
+            assert _snapshot_counts() == before
+            launch_code = ProductLaunchCode.query.filter_by(
+                organization_product_installation_id=installation_id
+            ).first()
+            assert launch_code.consumed_at is None
+
+    def test_no_audit_in_path_a_or_b(self, app):
+        with app.app_context():
+            chain = _build_chain_with_credential_and_code()
+            audit_before = AuditLog.query.count()
+
+            with pytest.raises(ProductLaunchCodeError):
+                _consume(chain, secret="segredo-errado")
+            with pytest.raises(ProductLaunchCodeError):
+                _consume(chain, code="codigo-inexistente-issue-67")
+
+            assert AuditLog.query.count() == audit_before
+
+
+class TestConsumeLaunchCodeCompatibility:
+    def test_credentials_and_other_installations_unaffected(self, app):
+        with app.app_context():
+            chain = _build_chain_with_credential_and_code(product_code="gedo")
+            other_chain = _build_chain_with_credential_and_code(product_code="kalender")
+
+            _consume(chain)
+
+            # A credencial e o código da OUTRA instalação continuam
+            # intactos e consumíveis.
+            other_result = _consume(other_chain)
+            assert isinstance(other_result, ProductLaunchAuthorization)
+            assert OrganizationProductInstallationCredential.query.filter_by(
+                organization_product_installation_id=other_chain["installation"].id
+            ).count() == 1
+
+    def test_no_response_field_leaks_secret_or_hash(self, app):
+        with app.app_context():
+            chain = _build_chain_with_credential_and_code()
+            result = _consume(chain)
+            values = list(dataclasses.asdict(result).values())
+            for value in values:
+                assert chain["code"] not in str(value)
+                assert chain["secret"] not in str(value)
