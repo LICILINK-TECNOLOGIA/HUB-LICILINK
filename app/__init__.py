@@ -1,3 +1,5 @@
+import uuid
+
 from dotenv import load_dotenv
 from flask import Flask
 
@@ -42,7 +44,21 @@ def create_app(config_name=None):
     
     @login_manager.user_loader
     def load_user(user_id):
-        return models.User.query.get(user_id)
+        # Flask-Login sempre entrega `user_id` como `str` (via
+        # `UserMixin.get_id()`), mas a PK real e' `UUID(as_uuid=True)`. O
+        # bind processor do SQLite (sem suporte nativo a UUID) exige um
+        # `uuid.UUID` de verdade e quebra com AttributeError ao receber uma
+        # `str` crua - por isso o gate de tipo abaixo, antes de qualquer
+        # tentativa de conversao (um int cuja representacao textual seja um
+        # hexadecimal de 32 digitos passaria por `uuid.UUID(str(...))` sem
+        # erro, entao a rejeicao nao pode depender só disso). Ver Issue #69.
+        if not isinstance(user_id, (str, uuid.UUID)):
+            return None
+        try:
+            normalized_user_id = uuid.UUID(str(user_id))
+        except Exception:
+            return None
+        return db.session.get(models.User, normalized_user_id)
     
     # Import and Register Blueprints
     from .blueprints.health import health_bp
