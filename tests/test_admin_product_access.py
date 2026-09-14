@@ -471,8 +471,10 @@ class TestRenderedForms:
 
         # 1 form "Adicionar Membro" (sempre presente, mesmo sem membros) +
         # 3 forms de produto (nenhuma concessão ainda -> todos "Conceder
-        # acesso") + 1 form de logout na navbar (Issue #29).
-        assert html.count('name="csrf_token"') == 1 + 3 + 1
+        # acesso") + 3 forms de "Configurar" instalação (Issue #68 -
+        # nenhuma instalação configurada ainda para nenhum dos 3
+        # produtos estruturais) + 1 form de logout na navbar (Issue #29).
+        assert html.count('name="csrf_token"') == 1 + 3 + 3 + 1
 
     def test_forms_do_not_send_status_or_product_id(self, client, app, get_csrf_token):
         with app.app_context():

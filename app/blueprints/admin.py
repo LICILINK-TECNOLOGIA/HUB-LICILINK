@@ -7,6 +7,11 @@ from ..models.identity import User, Organization
 from ..models.crm import Lead
 from ..extensions import db
 from ..services.access_service import AccessService, ProductAccessError, ProductAccessOperationError
+from ..services.organization_product_installation_service import (
+    OrganizationProductInstallationError,
+    OrganizationProductInstallationOperationError,
+    OrganizationProductInstallationService,
+)
 
 admin_bp = Blueprint('admin', __name__, url_prefix='/admin')
 
@@ -89,7 +94,15 @@ def org_details(org_id):
     roles = Role.query.all()
     users = User.query.all()
     products = AccessService.list_organization_products_for_admin(org.id)
-    return render_template('admin/org_details.html', org=org, roles=roles, users=users, products=products)
+    # Issue #68: consulta somente leitura, separada de
+    # `AccessService.list_organization_products_for_admin` (preocupação
+    # diferente - status de assinatura, não instalação) - indexada por
+    # `product.id`, a chave já disponível em cada `item` de `products`.
+    installations = OrganizationProductInstallationService.list_installations_by_organization(org.id)
+    return render_template(
+        'admin/org_details.html', org=org, roles=roles, users=users,
+        products=products, installations=installations,
+    )
 
 @admin_bp.route('/organizations/<uuid:org_id>/members', methods=['POST'])
 def add_member(org_id):
@@ -312,6 +325,90 @@ def revoke_product(org_id, product_code):
     except Exception:
         current_app.logger.exception(
             'Falha inesperada e não classificada ao revogar acesso a produto (org_id=%s, product_code=%s)',
+            org_id, product_code,
+        )
+        flash('Não foi possível concluir a operação. Tente novamente.', 'error')
+    return redirect(url_for('admin.org_details', org_id=org_id))
+
+
+@admin_bp.route('/organizations/<uuid:org_id>/products/<string:product_code>/installation', methods=['POST'])
+def configure_installation(org_id, product_code):
+    # Issue #68: cria OU atualiza a URL da instalação (upsert) - mesmo
+    # padrão de resolução de `org_id`/404 já usado por `grant_product`/
+    # `revoke_product`. `product_code` vem do caminho da rota, mas o
+    # service SEMPRE o revalida contra `organization_product.product.code`
+    # (relacionamento persistido) antes de usá-lo na validação da URL -
+    # nunca confia cegamente neste literal.
+    Organization.query.get_or_404(org_id)
+    url = request.form.get('url')
+    try:
+        OrganizationProductInstallationService.configure_installation(
+            org_id, product_code, url, actor_user_id=current_user.id,
+        )
+        flash('Instalação configurada com sucesso.', 'success')
+    except OrganizationProductInstallationOperationError as e:
+        current_app.logger.exception(
+            'Falha inesperada ao configurar instalação (org_id=%s, product_code=%s)',
+            org_id, product_code,
+        )
+        flash(str(e), 'error')
+    except OrganizationProductInstallationError as e:
+        # Erro de domínio já curado (nunca inclui a URL bruta enviada) -
+        # seguro para exibição direta.
+        flash(str(e), 'error')
+    except Exception:
+        current_app.logger.exception(
+            'Falha inesperada e não classificada ao configurar instalação (org_id=%s, product_code=%s)',
+            org_id, product_code,
+        )
+        flash('Não foi possível concluir a operação. Tente novamente.', 'error')
+    return redirect(url_for('admin.org_details', org_id=org_id))
+
+
+@admin_bp.route('/organizations/<uuid:org_id>/products/<string:product_code>/installation/activate', methods=['POST'])
+def activate_installation(org_id, product_code):
+    Organization.query.get_or_404(org_id)
+    try:
+        OrganizationProductInstallationService.activate_installation(
+            org_id, product_code, actor_user_id=current_user.id,
+        )
+        flash('Instalação ativada com sucesso.', 'success')
+    except OrganizationProductInstallationOperationError as e:
+        current_app.logger.exception(
+            'Falha inesperada ao ativar instalação (org_id=%s, product_code=%s)',
+            org_id, product_code,
+        )
+        flash(str(e), 'error')
+    except OrganizationProductInstallationError as e:
+        flash(str(e), 'error')
+    except Exception:
+        current_app.logger.exception(
+            'Falha inesperada e não classificada ao ativar instalação (org_id=%s, product_code=%s)',
+            org_id, product_code,
+        )
+        flash('Não foi possível concluir a operação. Tente novamente.', 'error')
+    return redirect(url_for('admin.org_details', org_id=org_id))
+
+
+@admin_bp.route('/organizations/<uuid:org_id>/products/<string:product_code>/installation/deactivate', methods=['POST'])
+def deactivate_installation(org_id, product_code):
+    Organization.query.get_or_404(org_id)
+    try:
+        OrganizationProductInstallationService.deactivate_installation(
+            org_id, product_code, actor_user_id=current_user.id,
+        )
+        flash('Instalação desativada com sucesso.', 'success')
+    except OrganizationProductInstallationOperationError as e:
+        current_app.logger.exception(
+            'Falha inesperada ao desativar instalação (org_id=%s, product_code=%s)',
+            org_id, product_code,
+        )
+        flash(str(e), 'error')
+    except OrganizationProductInstallationError as e:
+        flash(str(e), 'error')
+    except Exception:
+        current_app.logger.exception(
+            'Falha inesperada e não classificada ao desativar instalação (org_id=%s, product_code=%s)',
             org_id, product_code,
         )
         flash('Não foi possível concluir a operação. Tente novamente.', 'error')

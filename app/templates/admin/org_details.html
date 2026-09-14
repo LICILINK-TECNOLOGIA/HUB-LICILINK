@@ -232,11 +232,13 @@
                     <th>Código</th>
                     <th>Status</th>
                     <th>Acesso</th>
+                    <th>Instalação</th>
                     <th>Ações</th>
                 </tr>
             </thead>
             <tbody>
                 {% for item in products %}
+                {% set installation = installations.get(item.product.id) %}
                 <tr>
                     <td>{{ item.product.name }}</td>
                     <td>{{ item.product.code }}</td>
@@ -246,6 +248,51 @@
                             <span class="role-badge" style="background-color: #E8F5E9; color: #2E7D32;">Com acesso</span>
                         {% else %}
                             <span class="role-badge" style="background-color: #FFEBEE; color: #C62828;">Sem acesso</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if installation is none %}
+                            <!-- Issue #68: estado sempre indicado por texto explícito,
+                                 nunca só por cor - "Instalação não configurada". -->
+                            <span class="role-badge" style="background-color: #EEEEEE; color: var(--text-muted);">Instalação não configurada</span>
+                            <form action="{{ url_for('admin.configure_installation', org_id=org.id, product_code=item.product.code) }}" method="POST" style="margin-top: 0.5rem;">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <input type="text" name="url" class="form-control" placeholder="https://..." maxlength="255" style="font-size: 0.85rem; padding: 4px; width: 100%;">
+                                <button type="submit" class="btn btn-sm btn-primary" style="margin-top: 4px;">Configurar</button>
+                            </form>
+                        {% else %}
+                            {% if installation.is_active %}
+                                <span class="role-badge" style="background-color: #E8F5E9; color: #2E7D32;">Ativa</span>
+                            {% else %}
+                                <span class="role-badge" style="background-color: #FFEBEE; color: #C62828;">Inativa</span>
+                            {% endif %}
+                            <!-- URL de instalação: texto simples com escape padrão do
+                                 Jinja, nunca um link clicável (uma URL legada persistida
+                                 diretamente pode não ter sido validada pelo contrato
+                                 atual). -->
+                            <div style="font-size: 0.8rem; color: var(--text-muted); word-break: break-all; margin: 4px 0;">{{ installation.url }}</div>
+                            <form action="{{ url_for('admin.configure_installation', org_id=org.id, product_code=item.product.code) }}" method="POST" style="display: inline-block;">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <input type="text" name="url" class="form-control" value="{{ installation.url }}" maxlength="255" style="font-size: 0.85rem; padding: 4px; width: 100%;">
+                                <button type="submit" class="btn btn-sm btn-primary" style="margin-top: 4px;">Atualizar</button>
+                            </form>
+                            {% if installation.is_active %}
+                            <form action="{{ url_for('admin.deactivate_installation', org_id=org.id, product_code=item.product.code) }}" method="POST" style="display: inline-block; margin-top: 4px;">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button type="submit" class="btn btn-sm" style="background-color: #FFEBEE; color: #C62828; border: none; cursor: pointer;">Desativar</button>
+                            </form>
+                            {% else %}
+                            <form action="{{ url_for('admin.activate_installation', org_id=org.id, product_code=item.product.code) }}" method="POST" style="display: inline-block; margin-top: 4px;">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <!-- "Ativar" (não "Reativar"): uma instalação
+                                     recém-criada nunca esteve ativa antes -
+                                     Issue #68, estado inicial inativo. O
+                                     mesmo texto também cobre corretamente o
+                                     caso de reativação após uma desativação
+                                     explícita. -->
+                                <button type="submit" class="btn btn-sm btn-primary">Ativar</button>
+                            </form>
+                            {% endif %}
                         {% endif %}
                     </td>
                     <td>
@@ -264,7 +311,7 @@
                 </tr>
                 {% else %}
                 <tr>
-                    <td colspan="5" class="text-center">Nenhum produto estrutural disponível ainda.</td>
+                    <td colspan="6" class="text-center">Nenhum produto estrutural disponível ainda.</td>
                 </tr>
                 {% endfor %}
             </tbody>

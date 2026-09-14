@@ -35,6 +35,11 @@ from app.models import (
 )
 from app.services.bootstrap_service import BootstrapService
 from app.services.installation_credential_service import InstallationCredentialService
+from app.services.organization_product_installation_service import (
+    OrganizationProductInstallationError,
+    OrganizationProductInstallationService,
+)
+import app.services.organization_product_installation_service as opis_module
 from app.services.organization_service import OrganizationService
 from app.services.product_launch_code_service import (
     ProductLaunchAuthorization,
@@ -356,19 +361,25 @@ class TestIssueLaunchCodeDestinationUrl:
             assert result.destination_url == reloaded_installation.url
             assert launch_code.organization_product_installation_id == chain["installation"].id
 
-    def test_destination_url_with_external_whitespace_returned_byte_for_byte(self, app):
+    def test_destination_url_with_external_whitespace_is_now_rejected(self, app):
+        """Achado de compatibilidade da Issue #68: sob o contrato antigo
+        (#66), esta URL só era validada por `strip() != ''`, então
+        espaços externos passavam e eram devolvidos byte a byte. A
+        Issue #68 tornou `OrganizationProductInstallationService.validate_installation_url`
+        (chamada obrigatoriamente aqui, antes de `destination_url` ser
+        capturado) uma defesa que REJEITA explicitamente espaços
+        externos, nunca os corrige silenciosamente - mudança de
+        comportamento deliberada e esperada, não uma regressão."""
         with app.app_context():
             chain = _build_valid_chain()
             padded_url = "  https://instalacao-com-espacos-issue-66.local  "
             chain["installation"].url = padded_url
             db.session.commit()
 
-            result = _issue(chain)
-
-            # Não vazia (passa na validação, que só verifica `strip() !=
-            # ''`) mas retornada exatamente como armazenada - nenhum
-            # `.strip()` é aplicado ao valor de retorno.
-            assert result.destination_url == padded_url
+            with pytest.raises(ProductLaunchCodeError) as exc_info:
+                _issue(chain)
+            assert not isinstance(exc_info.value, ProductLaunchCodeOperationError)
+            assert padded_url not in str(exc_info.value)
 
     def test_destination_url_never_equals_product_url_when_different(self, app):
         with app.app_context():
@@ -995,6 +1006,237 @@ class TestIssueLaunchCodeAtomicityAndRollback:
 
             with pytest.raises(ProductLaunchCodeOperationError):
                 _issue(chain)
+
+
+class TestIssueLaunchCodeInstallationUrlValidation:
+    """Issue #68: `OrganizationProductInstallationService.validate_installation_url`
+    passou a ser defesa OBRIGATÓRIA dentro de `issue_launch_code` (nunca
+    reforço opcional) - substitui a checagem fraca anterior
+    (`url is None or url.strip() == ''`). Cobre especificamente a
+    integração; o contrato completo do validador está em
+    `tests/test_organization_product_installation_service.py`."""
+
+    def test_cross_product_host_rejected_in_production(self, app, monkeypatch):
+        with app.app_context():
+            monkeypatch.setitem(app.config, "IS_PRODUCTION", True)
+            monkeypatch.setitem(app.config, "L_GEDO_URL", "https://gedo.exemplo.licilink.com.br")
+            monkeypatch.setitem(app.config, "L_KALENDER_URL", "https://kalender.exemplo.licilink.com.br")
+
+            chain = _build_valid_chain(product_code="gedo")
+            # URL legada de OUTRO produto - host globalmente válido, mas
+            # nunca autorizado para GEDO.
+            chain["installation"].url = "https://kalender.exemplo.licilink.com.br/callback"
+            db.session.commit()
+
+            with pytest.raises(ProductLaunchCodeError) as exc_info:
+                _issue(chain)
+            assert not isinstance(exc_info.value, ProductLaunchCodeOperationError)
+
+    def test_malformed_canonical_config_fails_closed(self, app, monkeypatch):
+        with app.app_context():
+            monkeypatch.setitem(app.config, "IS_PRODUCTION", True)
+            monkeypatch.setitem(app.config, "L_GEDO_URL", None)
+
+            chain = _build_valid_chain(product_code="gedo")
+            chain["installation"].url = "https://qualquer-host-valido.exemplo.com/callback"
+            db.session.commit()
+
+            with pytest.raises(ProductLaunchCodeError) as exc_info:
+                _issue(chain)
+            assert not isinstance(exc_info.value, ProductLaunchCodeOperationError)
+
+    def test_invalid_installation_url_never_generates_random_material(self, app, monkeypatch):
+        with app.app_context():
+            chain = _build_valid_chain()
+            chain["installation"].url = "javascript:alert(1)"
+            db.session.commit()
+
+            calls = []
+            monkeypatch.setattr(
+                product_launch_code_service_module.secrets, "token_urlsafe",
+                lambda n: calls.append(n) or "should-not-be-called",
+            )
+
+            with pytest.raises(ProductLaunchCodeError):
+                _issue(chain)
+
+            assert calls == []
+
+    def test_invalid_installation_url_creates_no_code_and_no_audit(self, app):
+        with app.app_context():
+            chain = _build_valid_chain()
+            chain["installation"].url = "javascript:alert(1)"
+            db.session.commit()
+            before = _snapshot_counts()
+
+            with pytest.raises(ProductLaunchCodeError):
+                _issue(chain)
+
+            assert _snapshot_counts() == before
+
+    def test_invalid_installation_url_is_always_domain_error_never_operational(self, app):
+        with app.app_context():
+            chain = _build_valid_chain()
+            chain["installation"].url = "data:text/html,<script>1</script>"
+            db.session.commit()
+
+            with pytest.raises(ProductLaunchCodeError) as exc_info:
+                _issue(chain)
+            assert not isinstance(exc_info.value, ProductLaunchCodeOperationError)
+
+    def test_never_falls_back_to_product_url(self, app):
+        with app.app_context():
+            chain = _build_valid_chain()
+            chain["installation"].url = "javascript:alert(1)"
+            db.session.commit()
+            product_url = chain["product"].url
+
+            with pytest.raises(ProductLaunchCodeError) as exc_info:
+                _issue(chain)
+            # Nenhum destino - nem o legado `Product.url` - é aceito ou
+            # vazado na mensagem quando a validação da instalação falha.
+            assert product_url not in str(exc_info.value)
+
+    def test_reuses_already_resolved_canonical_product_never_a_second_resolution(self, app, monkeypatch):
+        """Confirma, via espião no resolvedor de produto canônico, que
+        `issue_launch_code` resolve o produto UMA única vez - o
+        `product.code` já resolvido é reutilizado na chamada ao
+        validador, nunca uma segunda resolução independente."""
+        with app.app_context():
+            chain = _build_valid_chain()
+            calls = []
+            original = ProductLaunchCodeService._resolve_canonical_product
+
+            def _spy(product_code):
+                calls.append(product_code)
+                return original(product_code)
+
+            monkeypatch.setattr(ProductLaunchCodeService, "_resolve_canonical_product", staticmethod(_spy))
+
+            _issue(chain)
+
+            assert len(calls) == 1
+
+    def test_structural_product_without_config_key_is_domain_error_not_operational(self, app, monkeypatch):
+        """Achado M1-1 da revisão técnica, terceiro caminho (emissão):
+        um `KeyError` cru dentro de `_resolve_canonical_host` nunca é
+        capturado por `except OrganizationProductInstallationError:`
+        (não é subclasse) - antes da correção, isso escapava para o
+        `except Exception` externo de `issue_launch_code` e virava
+        `ProductLaunchCodeOperationError` (erro operacional), nunca
+        `ProductLaunchCodeError` (erro de domínio). Corrigido: agora a
+        própria `OrganizationProductInstallationService` nunca levanta
+        `KeyError`, então este caminho já produz o erro de domínio
+        correto."""
+        with app.app_context():
+            monkeypatch.setitem(app.config, "IS_PRODUCTION", True)
+            monkeypatch.setitem(
+                opis_module._CANONICAL_PRODUCTS_BY_CODE,
+                "gedo",
+                {"code": "gedo", "name": "X", "description": "X"},  # sem url_config_key
+            )
+
+            chain = _build_valid_chain(product_code="gedo")
+            chain["installation"].url = "https://qualquer-host.exemplo.com/callback"
+            db.session.commit()
+
+            with pytest.raises(ProductLaunchCodeError) as exc_info:
+                _issue(chain)
+            assert not isinstance(exc_info.value, ProductLaunchCodeOperationError)
+
+
+class TestIssueLaunchCodeWithAdminManagedInstallation:
+    """Cobertura da decisão de segurança (revisão técnica pós-implementação,
+    registrada na Issue #68): uma instalação criada pelo service
+    administrativo (`OrganizationProductInstallationService.configure_installation`)
+    começa inativa - a emissão deve recusar enquanto isso não for
+    revertido por `activate_installation`, e a mesma instalação (mesma
+    identidade/URL/relacionamentos) deve voltar a emitir normalmente
+    depois de ativada."""
+
+    def _build_admin_managed_chain(self, product_code="gedo"):
+        user = _create_user()
+        organization = _create_organization(is_active=True)
+        OrganizationService.add_member(organization.id, user.id, "member")
+        product = _create_product(code=product_code)
+        org_product = OrganizationProduct(
+            organization_id=organization.id, product_id=product.id, status="active",
+        )
+        db.session.add(org_product)
+        db.session.commit()
+        installation = OrganizationProductInstallationService.configure_installation(
+            organization.id, product.code,
+            "https://instalacao-admin-managed-issue68.local/callback",
+            actor_user_id=None,
+        )
+        return {
+            "user": user, "organization": organization, "product": product,
+            "org_product": org_product, "installation": installation,
+        }
+
+    def test_does_not_emit_while_installation_is_inactive(self, app):
+        with app.app_context():
+            chain = self._build_admin_managed_chain()
+            assert chain["installation"].is_active is False
+
+            with pytest.raises(ProductLaunchCodeError) as exc_info:
+                ProductLaunchCodeService.issue_launch_code(
+                    chain["user"].id, chain["organization"].id, chain["product"].code,
+                )
+            assert not isinstance(exc_info.value, ProductLaunchCodeOperationError)
+            assert ProductLaunchCode.query.count() == 0
+
+    def test_emits_normally_after_explicit_activation_same_identity(self, app):
+        with app.app_context():
+            chain = self._build_admin_managed_chain()
+            installation_id = chain["installation"].id
+            installation_public_id = chain["installation"].public_id
+            installation_url = chain["installation"].url
+            org_product_status_before = chain["org_product"].status
+
+            OrganizationProductInstallationService.activate_installation(
+                chain["organization"].id, chain["product"].code, actor_user_id=None,
+            )
+
+            result = ProductLaunchCodeService.issue_launch_code(
+                chain["user"].id, chain["organization"].id, chain["product"].code,
+            )
+
+            assert isinstance(result, ProductLaunchCodeIssuance)
+            assert result.destination_url == installation_url
+
+            reloaded_installation = OrganizationProductInstallation.query.get(installation_id)
+            assert reloaded_installation.id == installation_id
+            assert reloaded_installation.public_id == installation_public_id
+            assert reloaded_installation.url == installation_url
+            assert reloaded_installation.is_active is True
+
+            # A ativação não mexeu na assinatura.
+            reloaded_org_product = OrganizationProduct.query.get(chain["org_product"].id)
+            assert reloaded_org_product.status == org_product_status_before
+
+    def test_activation_never_recreates_credential_or_previous_code(self, app):
+        with app.app_context():
+            chain = self._build_admin_managed_chain()
+            installation_id = chain["installation"].id
+            secret = InstallationCredentialService.issue_credential(installation_id, actor_user_id=None)
+            credential_count_before = OrganizationProductInstallationCredential.query.filter_by(
+                organization_product_installation_id=installation_id
+            ).count()
+
+            OrganizationProductInstallationService.activate_installation(
+                chain["organization"].id, chain["product"].code, actor_user_id=None,
+            )
+
+            assert OrganizationProductInstallationCredential.query.filter_by(
+                organization_product_installation_id=installation_id
+            ).count() == credential_count_before
+            # A credencial emitida antes da ativação continua válida.
+            reloaded = OrganizationProductInstallation.query.get(installation_id)
+            authenticated = InstallationCredentialService.authenticate_installation(
+                reloaded.public_id, secret,
+            )
+            assert authenticated is not None
 
 
 class TestIssueLaunchCodeCompatibility:

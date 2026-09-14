@@ -19,6 +19,10 @@ from ..models import (
 from .audit_service import AuditService
 from .bootstrap_service import STRUCTURAL_PRODUCTS
 from .installation_credential_service import InstallationCredentialService
+from .organization_product_installation_service import (
+    OrganizationProductInstallationError,
+    OrganizationProductInstallationService,
+)
 from .organization_service import OrganizationService
 
 # Issue #65/#66: entropia do código opaco de lançamento - mesma constante
@@ -492,10 +496,14 @@ class ProductLaunchCodeService:
         existente/ativa; vínculo pertencente exatamente a este par
         usuário/organização e `active`; produto canônico; assinatura
         `active`/`trial`; instalação pertencente exatamente a este
-        `OrganizationProduct` e ativa; URL da instalação não vazia; TTL
-        configurado válido) ser confirmada - qualquer rejeição interrompe
-        a operação sem criar `ProductLaunchCode`, sem `AuditLog`, sem
-        gerar nenhum material sensível.
+        `OrganizationProduct` e ativa; URL da instalação validada pelo
+        contrato completo e product-aware de
+        `OrganizationProductInstallationService.validate_installation_url`
+        - Issue #68, defesa obrigatória no uso, nunca dependente apenas
+        da escrita administrativa; TTL configurado válido) ser
+        confirmada - qualquer rejeição interrompe a operação sem criar
+        `ProductLaunchCode`, sem `AuditLog`, sem gerar nenhum material
+        sensível.
 
         Múltiplos códigos pendentes para o mesmo usuário/instalação são
         permitidos e nunca invalidados por uma nova emissão (mesma
@@ -561,15 +569,24 @@ class ProductLaunchCodeService:
                 )
             if not installation.is_active:
                 raise ProductLaunchCodeError("Instalação inativa.")
-            if installation.url is None or installation.url.strip() == '':
-                raise ProductLaunchCodeError("Instalação sem URL configurada.")
-            # Capturado em variável local ANTES do commit (que expira
-            # todos os objetos da sessão por padrão) - evita uma consulta
-            # extra de refresh só para reler `installation.url` depois do
-            # `commit()` abaixo, sem nunca reconsultar/re-resolver a
-            # instalação. Nunca modificado (nenhum `.strip()` aqui - essa
-            # normalização já ocorreu só para a checagem de vazio acima).
-            destination_url = installation.url
+            # Issue #68: validação central e product-aware - defesa
+            # OBRIGATÓRIA (não reforço opcional), nunca dependente
+            # apenas da escrita administrativa: linhas antigas, fixtures
+            # ou inserção manual podem não cumprir a política atual.
+            # `product.code` é o produto JÁ RESOLVIDO acima (nunca um
+            # valor novo) - garante que uma URL legada de OUTRO produto
+            # (ex.: host do Kalender numa instalação de GEDO) é
+            # rejeitada mesmo que o host seja globalmente conhecido.
+            # Qualquer falha aqui é sempre `OrganizationProductInstallationError`,
+            # convertida abaixo em `ProductLaunchCodeError` genérico -
+            # nunca `ProductLaunchCodeOperationError`, nunca interpola a
+            # URL/produto na mensagem.
+            try:
+                destination_url = OrganizationProductInstallationService.validate_installation_url(
+                    installation.url, product.code,
+                )
+            except OrganizationProductInstallationError:
+                raise ProductLaunchCodeError("Instalação com URL inválida.")
 
             ttl_seconds = ProductLaunchCodeService._resolve_ttl_seconds()
 
