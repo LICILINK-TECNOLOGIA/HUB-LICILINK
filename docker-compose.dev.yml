@@ -9,7 +9,7 @@ services:
       POSTGRES_PASSWORD: hub_password
       POSTGRES_DB: hub_db
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped

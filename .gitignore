@@ -10,3 +10,10 @@ __pycache__/
 .ruff_cache/
 .coverage
 htmlcov/
+
+# Bancos SQLite locais de desenvolvimento (Issue #70) - nunca versionados;
+# migrations/ (.py) e .env.example não são afetados por estes padrões.
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
