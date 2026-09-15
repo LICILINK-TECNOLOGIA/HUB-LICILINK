@@ -367,5 +367,13 @@ class TestNoImplicitCreationOrRegression:
         assert response.status_code == 200
         html = response.data.decode("utf-8")
 
-        assert 'href="https://produto-issue63-launcher.local"' in html
-        assert "Acessar Sistema" in html
+        # Issue #71 (atualização deliberada): a premissa original desta
+        # Issue #63 era que o launcher IGNORASSE completamente a
+        # instalação (puramente estrutural, "nenhum comportamento do HUB
+        # depende deste model ainda"). A #71 muda isso por definição - a
+        # ausência de instalação agora é um estado visual distinto
+        # ("Configuração pendente", desabilitado), nunca mais o antigo
+        # link direto para `Product.url`.
+        assert 'href="https://produto-issue63-launcher.local"' not in html
+        assert "Acessar Sistema" not in html
+        assert "Configuração pendente" in html

@@ -1064,7 +1064,13 @@ class TestLauncherCompatibilityWithCredentials:
         assert response.status_code == 200
         html = response.data.decode("utf-8")
 
-        assert 'href="https://produto-issue64-launcher-correcao.local"' in html
+        # Issue #71: o launcher não usa mais `<a href="{{ product.url }}">`
+        # - o estado com acesso e instalação ativa (este cenário) agora é
+        # um `<form method="post">` local para a rota de handoff, nunca
+        # a URL legada do produto. Atualização deliberada, preservando a
+        # intenção original do teste: emitir/rotacionar uma credencial
+        # não afeta a apresentação do launcher.
+        assert 'href="https://produto-issue64-launcher-correcao.local"' not in html
         assert "Acessar Sistema" in html
 
     def test_launcher_never_renders_secret_hash_or_public_id(self, client, app, get_csrf_token):

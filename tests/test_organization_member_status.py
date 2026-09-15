@@ -10,7 +10,16 @@ from alembic.operations import Operations
 from alembic.runtime.migration import MigrationContext
 
 from app.extensions import db
-from app.models import AuditLog, Organization, OrganizationMember, OrganizationProduct, Product, Role, User
+from app.models import (
+    AuditLog,
+    Organization,
+    OrganizationMember,
+    OrganizationProduct,
+    OrganizationProductInstallation,
+    Product,
+    Role,
+    User,
+)
 from app.models.identity import OrganizationMemberStatus
 from app.services.organization_service import OrganizationService
 from app.services.access_service import AccessService
@@ -964,6 +973,21 @@ class TestDashboardDisplaysOrganizationLegalName:
 
         org_product = OrganizationProduct(organization_id=org.id, product_id=product.id, status='active')
         db.session.add(org_product)
+        db.session.commit()
+
+        # Issue #71: o estado "lançável" (botão "Acessar Sistema") agora
+        # exige uma instalação ativa, não só uma assinatura `active` -
+        # sem esta linha, o launcher mostraria "Configuração pendente"
+        # em vez de "Acessar Sistema", quebrando a asserção de
+        # `test_permissions_and_product_listing_remain_unaffected` por
+        # um motivo alheio ao propósito desta Issue #32 (exibição do
+        # `legal_name`).
+        installation = OrganizationProductInstallation(
+            organization_product_id=org_product.id,
+            url='https://instalacao-issue-32.local',
+            is_active=True,
+        )
+        db.session.add(installation)
         db.session.commit()
 
         OrganizationService.add_member(org.id, user.id, 'member')

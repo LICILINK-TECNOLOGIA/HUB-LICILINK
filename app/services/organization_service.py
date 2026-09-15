@@ -529,11 +529,56 @@ class OrganizationService:
         if OrganizationService._user_is_internal_admin(user_id):
             return []
 
+        # Revisão técnica (achado A2, Issue #71): ordenação explícita e
+        # determinística - sem `.order_by()`, o SQL não garante nenhuma
+        # ordem entre chamadas, e `resolve_current_organization` abaixo
+        # (usado tanto pelo GET quanto pelo POST do launcher) depende de
+        # `orgs[0]` ser sempre o mesmo para o mesmo estado persistido.
+        # Critério primário: `created_at` do vínculo (primeiro vínculo
+        # ativo, a semântica que a V1 já pretende). Critério de
+        # desempate: `id` do vínculo - usado somente para determinismo
+        # (nunca com significado de negócio), garantindo que duas linhas
+        # com `created_at` idêntico produzam sempre a mesma ordem.
         memberships = OrganizationMember.query.filter_by(
             user_id=user_id,
             status=OrganizationMemberStatus.ACTIVE.value,
+        ).order_by(
+            OrganizationMember.created_at.asc(),
+            OrganizationMember.id.asc(),
         ).all()
         return [m.organization for m in memberships]
+
+    @staticmethod
+    def resolve_current_organization(user_id):
+        """Resolve a organização "corrente" da V1 (Issue #71) - primeiro
+        vínculo ativo do usuário segundo a ordem estável de
+        `get_user_organizations` (`created_at` asc., `id` asc. como
+        desempate). Retorna a `Organization`, ou `None` se o usuário não
+        tiver nenhum vínculo ativo elegível - mesmo contrato "objeto ou
+        `None`, nunca exceção" já usado por `get_active_membership`.
+
+        Único ponto de resolução da organização corrente V1: `GET /`
+        (`dashboard.index`) e `POST /launch/<product_code>`
+        (`dashboard.launch`) chamam exclusivamente este helper, nunca
+        duplicam `orgs[0] if orgs else None` localmente - qualquer
+        mudança futura na regra de resolução muda um único ponto.
+
+        Nunca aceita `organization_id` vindo do chamador - só `user_id`,
+        sempre resolvido a partir de `current_user.id` do lado servidor.
+        Delega inteiramente para `get_user_organizations` (nenhuma query
+        própria nova, nenhuma duplicação da consulta já existente) - por
+        isso já herda todos os filtros de elegibilidade de lá (vínculo
+        `active`, organização do vínculo, exclusão de administrador
+        interno), sem precisar repeti-los aqui.
+
+        Não é uma decisão de autorização: decide apenas QUAL organização
+        considerar "corrente" para fins de apresentação/roteamento V1 -
+        `ProductLaunchCodeService.issue_launch_code` continua sendo a
+        única fronteira autoritativa, revalidando integralmente vínculo/
+        organização/assinatura/instalação a cada chamada, mesmo com o
+        `organization_id` aqui resolvido de forma determinística."""
+        orgs = OrganizationService.get_user_organizations(user_id)
+        return orgs[0] if orgs else None
 
     @staticmethod
     def get_active_membership(user_id, organization_id):

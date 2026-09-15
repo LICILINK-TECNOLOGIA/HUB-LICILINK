@@ -1287,7 +1287,15 @@ class TestIssueLaunchCodeCompatibility:
         assert response.status_code == 200
         html = response.data.decode("utf-8")
 
-        assert 'href="https://produto-issue66-launcher.local"' in html
+        # Issue #71: o launcher não usa mais `<a href="{{ product.url }}">`
+        # - o estado com acesso e instalação ativa (este cenário) agora é
+        # um `<form method="post">` local para a rota de handoff, nunca
+        # a URL legada do produto. A asserção original desta Issue #66
+        # (presença do `href`) fica deliberadamente obsoleta e é
+        # atualizada aqui, preservando a intenção real do teste: a
+        # presença do código emitido não afeta a apresentação do
+        # launcher, e nem o código nem o hash vazam para o HTML.
+        assert 'href="https://produto-issue66-launcher.local"' not in html
         assert "Acessar Sistema" in html
         assert result.code not in html
         assert launch_code.code_hash not in html

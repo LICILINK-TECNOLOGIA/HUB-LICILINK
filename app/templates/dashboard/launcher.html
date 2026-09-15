@@ -182,10 +182,18 @@
             <p class="product-desc">{{ item.product.description }}</p>
             
             <div class="product-action">
-                {% if item.has_access %}
-                    <a href="{{ item.product.url }}" class="btn btn-primary w-100" target="_blank">Acessar Sistema</a>
-                {% else %}
+                {% set installation = installations.get(item.product.id) %}
+                {% if not item.has_access %}
                     <button type="button" class="btn w-100" disabled aria-disabled="true">Em breve</button>
+                {% elif not installation %}
+                    <button type="button" class="btn w-100" disabled aria-disabled="true">Configuração pendente</button>
+                {% elif not installation.is_active %}
+                    <button type="button" class="btn w-100" disabled aria-disabled="true">Aguardando ativação</button>
+                {% else %}
+                    <form method="post" action="{{ url_for('dashboard.launch', product_code=item.product.code) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-primary w-100">Acessar Sistema</button>
+                    </form>
                 {% endif %}
             </div>
         </div>
