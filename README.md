@@ -18,12 +18,18 @@ PostgreSQL, Jinja2 (templates renderizados no servidor).
 caminho comprovadamente compatível com as migrations do projeto hoje (ver
 [Solução de problemas](#solução-de-problemas) sobre SQLite).
 
-**Situação atual da integração federada**: os blocos de autenticação
-federada (credencial por instalação, código de lançamento, consumo
-servidor-a-servidor) já existem e são testáveis isoladamente, mas a rota que
-efetivamente inicia o handoff visual **HUB → GEDO ainda não foi
-implementada**. Este README documenta o HUB como ele é hoje, não como
-produto federado finalizado.
+**Situação atual da integração federada**: o lado HUB da autenticação
+federada está implementado e é testável isoladamente: credencial por
+instalação, código de lançamento, consumo servidor-a-servidor e a rota
+`POST /launch/<product_code>` que inicia o handoff a partir do launcher. O
+lado GEDO não foi inspecionado nem homologado nesta etapa: o receptor e o
+cliente servidor-a-servidor do GEDO ainda precisam ser disponibilizados e
+confirmados para a integração. O fluxo completo HUB → GEDO **ainda não foi
+integrado nem homologado**. Este README documenta o HUB como ele é hoje, não
+como produto federado finalizado. O contrato do lado HUB está em
+[`docs/federation-contract.md`](docs/federation-contract.md) e o
+procedimento provisório de credenciais em
+[`docs/federation-credentials.md`](docs/federation-credentials.md).
 
 ## Pré-requisitos
 
@@ -329,9 +335,17 @@ zero, que continua exigindo PostgreSQL.)
   (ex.: `https://gedo.local`) são **exemplos sintéticos** - não precisam
   resolver de verdade para testar cadastro, instalação ou emissão de código
   localmente.
-- **A rota `POST` do launcher (o handoff federado em si) ainda não foi
-  implementada.**
-- **O fluxo visual completo HUB → GEDO permanece pendente.**
+- A rota `POST /launch/<product_code>` do launcher (o handoff federado do lado
+  HUB) **já está implementada**. Ela entrega o código ao `destination_url` da
+  instalação. O receptor e o cliente servidor-a-servidor do GEDO ainda
+  precisam ser disponibilizados e confirmados, e o fluxo visual completo
+  HUB → GEDO **ainda não foi integrado nem homologado**.
+- Não há rota HTTP nem comando CLI para emitir, rotacionar ou revogar
+  credenciais de instalação; o procedimento provisório está em
+  [`docs/federation-credentials.md`](docs/federation-credentials.md).
+- O endpoint de consumo (`POST /api/federation/launch/consume`) **ainda não
+  tem rate limiting** nem validação HTTPS própria em produção (ver
+  [`docs/federation-contract.md`](docs/federation-contract.md)).
 - Planos e quotas comerciais **não fazem parte** deste setup local.
 - Deploy, SSH de servidor e configuração de produção **estão fora do escopo
   deste README** - este guia cobre exclusivamente onboarding de
