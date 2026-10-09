@@ -1,0 +1,84 @@
+# HUB em homologação: Gunicorn atrás do Traefik que já existe no VPS.
+# Roteiro completo, portões e pendências: docs/staging-deploy.md.
+#
+# Este é o arquivo COMUM aos dois caminhos de certificado TLS. Ele liga o TLS no
+# router e NÃO escolhe de onde vem o certificado:
+#   - certificado fixo, já carregado na configuração do Traefik: use só este
+#     arquivo;
+#   - ACME: use este arquivo junto com compose.staging.acme.yml, que acrescenta
+#     a label do resolvedor de certificados.
+# O conjunto de arquivos é escolhido uma única vez por implantação, pela
+# variável COMPOSE_FILE (docs/staging-deploy.md). Não rode comandos com `-f`.
+#
+# Este arquivo NÃO define nenhum valor que dependa do VPS. As variáveis abaixo
+# são obrigatórias e não têm valor padrão: sem elas, `docker compose` recusa.
+#   HUB_IMAGE_TAG       etiqueta da imagem construída (por exemplo, o commit)
+#   HUB_ENV_FILE        arquivo de variáveis do contêiner, FORA do repositório
+#   TRAEFIK_ENTRYPOINT  nome real do entrypoint HTTPS do Traefik do VPS
+# Nomes e descrições: deploy/staging/compose.env.example e app.env.example.
+#
+# A quantidade de proxies confiáveis, o provedor de e-mail e os segredos vêm do
+# arquivo HUB_ENV_FILE, nunca deste arquivo.
+
+name: hub-hml
+
+x-hub-base: &hub-base
+  image: licilink-hub:${HUB_IMAGE_TAG:?Defina HUB_IMAGE_TAG com a etiqueta da imagem}
+  env_file:
+    - ${HUB_ENV_FILE:?Defina HUB_ENV_FILE com o caminho do arquivo de variaveis, fora do repositorio}
+  environment:
+    # Explícito: o servidor WSGI recusa iniciar com qualquer outro ambiente.
+    FLASK_ENV: staging
+  networks:
+    - licilink-hml
+  read_only: true
+  tmpfs:
+    - /tmp
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+
+services:
+  hub:
+    <<: *hub-base
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    # Só a porta interna, visível na rede Docker. Nenhuma porta é publicada no
+    # host: não acrescente `ports`.
+    expose:
+      - "8000"
+    # O healthcheck é o da imagem (GET /health). Ele prova que o processo
+    # responde, não que o banco responde.
+    #
+    # Labels em formato de mapa, para a mesclagem com compose.staging.acme.yml
+    # ser inequívoca. Não há label tls.certresolver aqui, de propósito: sem o
+    # arquivo do caminho ACME, o Traefik precisa já ter o certificado do domínio.
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: licilink-hml
+      traefik.http.routers.hub-hml.rule: Host(`hub-hml.licilink.com.br`)
+      traefik.http.routers.hub-hml.entrypoints: ${TRAEFIK_ENTRYPOINT:?Defina TRAEFIK_ENTRYPOINT com o nome do entrypoint HTTPS do Traefik do VPS}
+      traefik.http.routers.hub-hml.tls: "true"
+      traefik.http.services.hub-hml.loadbalancer.server.port: "8000"
+      # Proteção de acesso da homologação: pendência do VPS, ainda não decidida.
+      # Nenhum middleware é declarado aqui de propósito.
+
+  # Comando avulso das migrations. Nunca sobe com `up`: só roda quando chamado
+  # explicitamente, uma vez por implantação, antes de iniciar o serviço:
+  #   docker compose --profile ops run --rm migrate
+  # Sem labels do Traefik e sem healthcheck: não recebe tráfego.
+  migrate:
+    <<: *hub-base
+    profiles:
+      - ops
+    restart: "no"
+    command: ["flask", "db", "upgrade"]
+    healthcheck:
+      disable: true
+
+networks:
+  licilink-hml:
+    external: true
