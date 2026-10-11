@@ -349,6 +349,9 @@ zero, que continua exigindo PostgreSQL.)
 - Planos e quotas comerciais **não fazem parte** deste setup local.
 - Deploy, SSH de servidor e configuração de produção **estão fora do escopo
   deste README** - este guia cobre exclusivamente onboarding de
+  desenvolvimento local. A preparação da implantação em homologação (imagem
+  Docker, Gunicorn e proxy reverso) está em
+  [`docs/staging-deploy.md`](docs/staging-deploy.md); nada dela é usado no
   desenvolvimento local.
 
 ## Segurança

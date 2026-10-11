@@ -1,0 +1,17 @@
+# Caminho ACME do certificado TLS do HUB em homologação.
+#
+# Override de compose.staging.yml: nunca é usado sozinho. Acrescenta SOMENTE a
+# label do resolvedor de certificados ao router; todas as outras labels vêm do
+# arquivo base e são preservadas pela mesclagem do Compose.
+#
+# Use este arquivo só se o Traefik do VPS emite o certificado do domínio por
+# ACME. Com certificado fixo já carregado no Traefik, NÃO use este arquivo.
+# A escolha é feita uma única vez por implantação, pela variável COMPOSE_FILE
+# (docs/staging-deploy.md).
+#
+# TRAEFIK_CERTRESOLVER é obrigatória neste caminho e não tem valor padrão.
+
+services:
+  hub:
+    labels:
+      traefik.http.routers.hub-hml.tls.certresolver: ${TRAEFIK_CERTRESOLVER:?Defina TRAEFIK_CERTRESOLVER com o nome do resolvedor de certificados do Traefik do VPS}

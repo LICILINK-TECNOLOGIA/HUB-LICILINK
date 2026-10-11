@@ -1,0 +1,62 @@
+# Contexto de build da imagem do HUB. O Dockerfile copia só requirements.txt,
+# app/ e migrations/; esta lista é a segunda barreira.
+
+# Segredos e configuração local
+.env
+.env.*
+**/.env
+**/.env.*
+*.env
+cookies*.txt
+
+# Pasta de instância do Flask e bancos locais
+instance/
+**/instance/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+**/*.db
+**/*.sqlite
+**/*.sqlite3
+
+# Ambientes virtuais
+venv/
+.venv/
+
+# Git e CI
+.git/
+.gitignore
+.gitattributes
+.github/
+
+# Caches
+__pycache__/
+**/__pycache__/
+*.pyc
+**/*.pyc
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Ferramentas locais
+.claude/
+.agents/
+desktop.ini
+**/desktop.ini
+
+# Fora da imagem de execução
+tests/
+docs/
+deploy/
+README.md
+run.py
+pyproject.toml
+Dockerfile
+.dockerignore
+docker-compose.dev.yml
+compose.staging.yml
+compose.staging.acme.yml
